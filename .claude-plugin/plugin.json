@@ -1,0 +1,11 @@
+{
+  "name": "claude-hashline",
+  "version": "0.1.0",
+  "description": "TODO: brief explanation of what claude-hashline does",
+  "author": {
+    "name": "Pedro Guimaraes",
+    "email": "pedroguimaraes@ravn.co"
+  },
+  "license": "MIT",
+  "keywords": []
+}
