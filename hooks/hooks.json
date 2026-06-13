@@ -1,13 +1,13 @@
 {
   "hooks": {
-    "PostToolUse": [
+    "PreToolUse": [
       {
-        "matcher": "Write|Edit",
+        "matcher": "Edit|Write|NotebookEdit",
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/example.sh",
-            "timeout": 30
+            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/block-edit.sh",
+            "timeout": 5
           }
         ]
       }

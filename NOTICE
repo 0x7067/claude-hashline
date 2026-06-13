@@ -1,0 +1,12 @@
+claude-hashline
+
+This plugin depends on and adapts material from @oh-my-pi/hashline, used under
+the MIT License:
+
+  Copyright (c) 2025 Mario Zechner
+  Copyright (c) 2025-2026 Can Bölük
+
+The hashline patch language, applier, snapshot store, and stale-anchor recovery
+are provided by @oh-my-pi/hashline (https://github.com/can1357/oh-my-pi,
+packages/hashline). The model-facing tool descriptions in src/descriptions.ts
+are adapted from that package's prompt.md.
