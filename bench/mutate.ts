@@ -7,8 +7,10 @@
  *  - "hard-anchor" — the mutated line's text also occurs elsewhere in the file,
  *                    the duplicate/ambiguous case where str_replace anchoring
  *                    fails and hashline should win.
+ *  - "multi-edit"  — two independent single-site bugs in one file; fixing it
+ *                    needs two sequential edits (exercises chained-edit reuse).
  */
-export type Difficulty = "simple" | "hard-anchor";
+export type Difficulty = "simple" | "hard-anchor" | "multi-edit";
 
 export interface Mutation {
   /** Stable id of the mutation kind. */
@@ -92,6 +94,7 @@ export function mutationsFor(source: string): Mutation[] {
   const lines = source.split("\n");
   const masked = maskNonCode(lines);
   const out: Mutation[] = [];
+  const singleSites: { line: number; mutatedLine: string; describe: string }[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -112,6 +115,7 @@ export function mutationsFor(source: string): Mutation[] {
         difficulty: lineOccursMoreThanOnce(lines, i) ? "hard-anchor" : "simple",
         line: i + 1,
       });
+      singleSites.push({ line: i + 1, mutatedLine, describe: rule.describe });
     }
     if (GUARD_RE.test(line)) {
       const buggyLines = lines.filter((_, j) => j !== i);
@@ -123,6 +127,24 @@ export function mutationsFor(source: string): Mutation[] {
         line: i + 1,
       });
     }
+  }
+  // Multi-edit fixture (R6): compose the first two non-overlapping single-site
+  // operator edits into ONE buggy file so the fix needs two sequential edits.
+  // meta.line is the first site; these are hashline-arm only (search-mode
+  // assumes a single anchor line).
+  const distinct = singleSites.filter((s, i) => singleSites.findIndex(o => o.line === s.line) === i);
+  if (distinct.length >= 2) {
+    const [a, b] = distinct;
+    const buggyLines = [...lines];
+    buggyLines[a.line - 1] = a.mutatedLine;
+    buggyLines[b.line - 1] = b.mutatedLine;
+    out.push({
+      kind: "multi-edit",
+      buggy: buggyLines.join("\n"),
+      description: `# Fix the bugs\n\nThis file has TWO separate bugs. Fix both:\n1. Near line ${a.line}: ${a.describe}\n2. Near line ${b.line}: ${b.describe}`,
+      difficulty: "multi-edit",
+      line: a.line,
+    });
   }
   return out;
 }

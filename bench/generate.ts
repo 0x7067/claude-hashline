@@ -68,7 +68,7 @@ function main() {
     const muts = mutationsFor(source);
     // Prefer coverage of both difficulty classes.
     const picked: typeof muts = [];
-    for (const d of ["simple", "hard-anchor"] as Difficulty[]) {
+    for (const d of ["simple", "hard-anchor", "multi-edit"] as Difficulty[]) {
       const m = muts.find(x => x.difficulty === d);
       if (m) picked.push(m);
     }

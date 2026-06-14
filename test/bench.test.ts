@@ -47,6 +47,18 @@ describe("mutations (R10)", () => {
     expect(muts.some(m => m.kind === "operator-add")).toBe(false);
     expect(muts.some(m => m.kind === "operator-eq")).toBe(false);
   });
+
+  test("multi-edit composes two non-overlapping single-site bugs in one file (R6)", () => {
+    const m = mutationsFor(src).find(x => x.kind === "multi-edit");
+    expect(m).toBeDefined();
+    expect(m!.difficulty).toBe("multi-edit");
+    const orig = src.split("\n");
+    const buggy = m!.buggy.split("\n");
+    const changed = orig.map((l, i) => (l !== buggy[i] ? i + 1 : 0)).filter(Boolean);
+    expect(changed.length).toBe(2); // exactly two sites
+    expect(changed[0]).not.toBe(changed[1]); // on different lines
+    expect(m!.line).toBe(changed[0]); // meta.line = first site
+  });
 });
 
 describe("scoring (R14) with pinned prettier", () => {
