@@ -40,15 +40,17 @@ server.registerTool(
   {
     description: SEARCH_TOOL_DESCRIPTION,
     inputSchema: {
-      pattern: z.string().describe("Regex source matched against each line."),
+      pattern: z.string().describe("Regex source (Rust/RE2 syntax; no backreferences or lookbehind)."),
       i: z.boolean().optional().describe("Case-insensitive search."),
-      gitignore: z.boolean().optional().describe("Respect .gitignore (default true); set false to include ignored files."),
+      gitignore: z.boolean().optional().describe("Respect .gitignore/.ignore (default true); set false to include ignored files."),
+      paths: z.array(z.string()).optional().describe("Workspace-relative subpaths to scope the search; defaults to the whole tree."),
+      multiline: z.boolean().optional().describe("Allow a single pattern to match across lines."),
       maxResults: z.number().int().positive().optional().describe("Cap on total match lines returned."),
     },
   },
-  async ({ pattern, i, gitignore, maxResults }) => {
+  async ({ pattern, i, gitignore, paths, multiline, maxResults }) => {
     try {
-      const text = await hashlineSearch(ctx, { pattern, i, gitignore, maxResults });
+      const text = await hashlineSearch(ctx, { pattern, i, gitignore, paths, multiline, maxResults });
       return { content: [{ type: "text", text }] };
     } catch (err) {
       return { content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }], isError: true };
