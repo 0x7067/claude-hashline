@@ -7,5 +7,6 @@ node_modules/
 
 # Generated benchmark fixtures (regenerate from bench/corpus via bench/generate.ts)
 bench/fixtures/
-# Benchmark report output
-report.md
+# Benchmark report output (generated; regenerate via bench/run.ts)
+report*.md
+report.err
