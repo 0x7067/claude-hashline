@@ -48,8 +48,9 @@ Requires **Bun ≥ 1.3.14**. From the plugin directory:
 bun install
 ```
 
-Add it as a local plugin in Claude Code. The MCP server and the block hook are
-wired via `.mcp.json` and `hooks/hooks.json`.
+Add it as a local plugin in Claude Code. The MCP server is declared in
+`.claude-plugin/plugin.json` (`mcpServers.hashline`) and the block hook in
+`hooks/hooks.json`.
 
 ## Escape hatch
 
