@@ -233,4 +233,23 @@ describe("hashlineSearch", () => {
     expect(res.isError).toBe(true);
     expect(res.text).toMatch(/no hashline read recorded/i);
   });
+
+  test("gitignored files are skipped by default, included with gitignore:false (oh-my-pi parity)", async () => {
+    writeFileSync(path.join(root, ".gitignore"), "*.log\n");
+    writeFileSync(path.join(root, "keep.ts"), "const hit = 1;\n");
+    writeFileSync(path.join(root, "debug.log"), "hit in log\n");
+
+    const def = await hashlineSearch(ctx, { pattern: "hit" });
+    expect(def).toContain("keep.ts"); // non-ignored sibling still matches
+    expect(def).not.toContain("debug.log"); // ignored file excluded by default
+
+    const all = await hashlineSearch(ctx, { pattern: "hit", gitignore: false });
+    expect(all).toContain("debug.log"); // opt-out includes it
+  });
+
+  test("no .gitignore present behaves as before (no regression)", async () => {
+    writeFileSync(path.join(root, "plain.ts"), "const hit = 1;\n");
+    const out = await hashlineSearch(ctx, { pattern: "hit" });
+    expect(out).toContain("plain.ts");
+  });
 });

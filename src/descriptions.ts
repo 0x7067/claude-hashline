@@ -37,8 +37,10 @@ before, three after each hit). To change a line you can see, copy that file's
 OUTSIDE the shown context, \`read\` that file for
 the full tagged view.
 
-Args: \`pattern\` (regex source, required), \`i\` (case-insensitive), \`maxResults\`
-(cap on returned matches; results truncate with a hint to narrow the pattern).
+Args: \`pattern\` (regex source, required), \`i\` (case-insensitive), \`gitignore\`
+(respect .gitignore, default true; pass false to include ignored files),
+\`maxResults\` (cap on returned matches; results truncate with a hint to narrow
+the pattern).
 Skips node_modules, dot-directories, and very large files.`;
 
 export const EDIT_TOOL_DESCRIPTION = `Apply line-anchored edits to a file using the hashline patch language.

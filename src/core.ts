@@ -16,8 +16,9 @@ import {
   type SnapshotStore,
   stripBom,
 } from "@oh-my-pi/hashline";
-import { readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import * as path from "node:path";
+import ignore from "ignore";
 import { JailedFilesystem, PathEscapeError } from "./jailed-fs.ts";
 
 export interface HashlineContext {
@@ -111,8 +112,20 @@ export interface SearchArgs {
   pattern: string;
   /** Case-insensitive search (oh-my-pi `i`). */
   i?: boolean;
+  /** Respect the repo's `.gitignore` (oh-my-pi `gitignore`, default true). */
+  gitignore?: boolean;
   /** Cap on total match lines returned (default 50). */
   maxResults?: number;
+}
+
+/** Build a matcher from the root `.gitignore`, or null when absent/unreadable.
+ * Mirrors oh-my-pi's default-on gitignore respect. */
+function loadGitignore(root: string): { ignores(rel: string): boolean } | null {
+  try {
+    return ignore().add(readFileSync(path.join(root, ".gitignore"), "utf8"));
+  } catch {
+    return null; // no .gitignore — nothing to filter
+  }
 }
 
 /**
@@ -179,6 +192,7 @@ function mergeWindows(hits: number[], lineCount: number): Array<[number, number]
 export async function hashlineSearch(ctx: HashlineContext, args: SearchArgs): Promise<string> {
   const re = new RegExp(args.pattern, args.i ? "i" : ""); // throws on invalid pattern (server wraps to isError)
   const cap = args.maxResults && args.maxResults > 0 ? args.maxResults : DEFAULT_MAX_SEARCH_RESULTS;
+  const ig = args.gitignore === false ? null : loadGitignore(ctx.root);
 
   const blocks: string[] = [];
   let total = 0;
@@ -186,6 +200,8 @@ export async function hashlineSearch(ctx: HashlineContext, args: SearchArgs): Pr
 
   for (const abs of walkFiles(ctx.root).sort()) {
     if (truncated) break;
+    // gitignore filter: the `ignore` package requires POSIX-separated relatives.
+    if (ig && ig.ignores(path.relative(ctx.root, abs).split(path.sep).join("/"))) continue;
     let size: number;
     try {
       size = statSync(abs).size;

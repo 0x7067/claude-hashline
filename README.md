@@ -30,8 +30,9 @@ and a hook that blocks the built-in editors so the model uses hashline.
   - `read` tags output and records a whole-file snapshot keyed by absolute path.
   - `search` regex-matches across the workspace and returns hits in the same
     tagged format, recording a snapshot for each matched file so the model can
-    `edit` straight off a hit — no whole-file `read` first. Skips
-    `node_modules`, dot-directories, and oversized files.
+    `edit` straight off a hit — no whole-file `read` first. Respects
+    `.gitignore` by default; skips `node_modules`, dot-directories, and
+    oversized files.
   - `edit` runs three gates the engine doesn't — **path containment** (edits
     can't escape the workspace), **read-before-edit** (you must `read` a file
     first), and **file creation** (a tagless `[path]` header creates a file) —

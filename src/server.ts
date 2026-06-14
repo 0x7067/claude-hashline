@@ -42,12 +42,13 @@ server.registerTool(
     inputSchema: {
       pattern: z.string().describe("Regex source matched against each line."),
       i: z.boolean().optional().describe("Case-insensitive search."),
+      gitignore: z.boolean().optional().describe("Respect .gitignore (default true); set false to include ignored files."),
       maxResults: z.number().int().positive().optional().describe("Cap on total match lines returned."),
     },
   },
-  async ({ pattern, i, maxResults }) => {
+  async ({ pattern, i, gitignore, maxResults }) => {
     try {
-      const text = await hashlineSearch(ctx, { pattern, i, maxResults });
+      const text = await hashlineSearch(ctx, { pattern, i, gitignore, maxResults });
       return { content: [{ type: "text", text }] };
     } catch (err) {
       return { content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }], isError: true };
