@@ -61,3 +61,25 @@ Objective: minimize mean edit-failures/task; guardrails = pass not worse by ≥1
 ### Convergence
 
 Baseline classification found the colon-range category was **100%** of genuine rejections. Cycle 1 drove haiku dev rejections to **0**. With no genuine-rejection category left and sonnet already at the floor, the loop has **no remaining signal** → converged after 1 cycle (stopping rather than spending cap-3's remaining budget hunting noise).
+
+---
+
+## Diff-preview validation (plan 005, U5)
+
+Validating the post-edit tagged window (commits ab5241b/d983b75) — does returning a numbered window let the model chain edits without re-reading? Measured paired: candidate (HEAD, window) vs baseline (4dd8ef1, no window), sonnet, hashline arm, 3 multi-edit fixtures.
+
+| fixture | base turns | cand turns | base tok | cand tok |
+|---|---|---|---|---|
+| 0001-multi-edit | 3 | 3 | 319 | 332 |
+| 0006-multi-edit | 3 | 3 | 256 | 230 |
+| 0008-multi-edit | 3 | 3 | 286 | 307 |
+
+`paired.ts` verdict: **DISCARD — edit-fails did not improve (Δ 0), tokens Δ +3/task (noise).**
+
+**Interpretation (did it fire? — no).** Every fixture ran in **3 turns in both arms** = read → single edit → done. Sonnet fixed *both* bugs in one multi-hunk patch, so it never made a second edit and there was never a re-read to eliminate. The window was emitted but unused. The DISCARD therefore proves only **no regression** (always-on window costs ~0 even when unused — validates KTD2); it says nothing about the win, because the change never fired.
+
+**Root cause = wrong instrument, not a bad feature.** This benchmark poses one-shot "fix the bugs" tasks on tiny files; a capable model always batches nearby fixes into one patch. The diff-preview's value is in *sequential* editing (edit → observe → edit across turns), which these fixtures don't model. This is Risk 3 from plan 005, confirmed empirically.
+
+**Disposition: KEEP** U1–U4 on mechanism (unit-proven chaining contract) + safety (no regression). U5's live win is **unproven on this benchmark by design**.
+
+**Deferred follow-up:** a sequential-edit harness that forces two separate edit turns (e.g. far-apart bugs in a large file, or a verify-between-edits task), or measurement inside a real agentic multi-turn loop, is required to actually quantify the re-read savings. Tracked as follow-up, not done here.
