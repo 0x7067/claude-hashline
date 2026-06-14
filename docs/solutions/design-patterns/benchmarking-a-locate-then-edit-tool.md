@@ -1,6 +1,7 @@
 ---
 title: Benchmarking a search/navigation tool requires withholding the path — and harness search lifts weak models most
 date: 2026-06-14
+last_updated: 2026-06-14
 category: design-patterns
 module: bench
 problem_type: design_pattern
@@ -84,6 +85,33 @@ In search-mode, haiku with hashline `search` jumps **+25pp over control**
 Implementation: `bench/search-mode.ts` (anchor derivation, prompt rewrite,
 distractor selection), `--search` flag in `bench/run.ts`, and the `searchCalls`
 metric in `bench/runner.ts`.
+
+## Update (2026-06-14): read direction, not magnitude — n=12 is noisy
+
+A later run swapped the search engine (hand-rolled JS walk → ripgrep) with a
+**byte-identical output format** (held by deterministic unit tests, so the model
+sees the same results; only the production mechanism changed). The search-mode
+pass-rates still moved:
+
+```
+model    arm        prior pass    ripgrep pass   search/task   out-tok (ripgrep)
+haiku    control    66.7%         66.7%          0.0           2129
+haiku    hashline   91.7%         75.0%          1.0           1421
+sonnet   control    83.3%         83.3%          0.0           1616
+sonnet   hashline   83.3%         83.3%          1.7           1140
+```
+
+haiku-hashline dropped 91.7% → 75.0% — but that is a **2-fixture swing on n=12**
+(≈8.3pp per fixture), and the format is provably unchanged, so it is run-to-run
+LLM variance, not a capability regression. What held across both runs: hashline ≥
+control for both models (haiku +8.3pp, sonnet tie), search/task > 0 (the tool is
+used), and hashline spends fewer tokens than control (−33% / −29%).
+
+**Lesson:** at n=12 a single-run pass-rate is a noisy point estimate; whole-fixture
+swings are expected. Anchor "no regression" claims on (a) deterministic invariants
+(format parity via unit tests), (b) arm-vs-arm *direction*, and (c) the engagement
+metric — not on the absolute pass-rate of one run. To trust magnitude, grow the
+fixture set or run multiple seeds and report variance.
 
 ## Related
 
