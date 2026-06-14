@@ -99,3 +99,32 @@ export async function* runRipgrep(opts: RunRipgrepOptions): AsyncGenerator<Ripgr
     if (proc.exitCode === null) proc.kill();
   }
 }
+
+export interface RipgrepArgsInput {
+  /** Regex source (Rust/RE2 syntax). */
+  pattern: string;
+  /** Case-insensitive. */
+  i?: boolean;
+  /** Respect ignore files (default true); false adds `--no-ignore`. */
+  gitignore?: boolean;
+  /** Multiline matching (`-U`), so `.` and the pattern can span lines. */
+  multiline?: boolean;
+  /** Workspace-relative subpaths to scope the search; defaults to the whole tree. */
+  paths?: string[];
+}
+
+/**
+ * Build the ripgrep argv for a search. Always emits `--json` with a 1-before /
+ * 3-after context window and `--sort path` for deterministic output, and
+ * `--no-require-git` so `.gitignore` is honored even outside a git repo (parity
+ * with the former in-process walk). `-e` guards patterns that begin with `-`.
+ */
+export function buildRipgrepArgs(o: RipgrepArgsInput): string[] {
+  const argv = ["--json", "-B1", "-A3", "--no-require-git", "--sort", "path"];
+  if (o.i) argv.push("-i");
+  if (o.gitignore === false) argv.push("--no-ignore");
+  if (o.multiline) argv.push("-U");
+  argv.push("-e", o.pattern);
+  argv.push(...(o.paths && o.paths.length > 0 ? o.paths : ["."]));
+  return argv;
+}
