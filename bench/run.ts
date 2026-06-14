@@ -69,6 +69,7 @@ async function main() {
   }
   const arms = (arg("--arms", "hashline,control") as string).split(",").filter(Boolean) as Arm[];
   const maxTurns = Number(arg("--max-turns", "30"));
+  const sessionTimeoutMs = Number(arg("--session-timeout", "300")) * 1000;
   const outPath = arg("--out");
 
   const manifest = (() => {
@@ -111,6 +112,7 @@ async function main() {
             prompt: fx.task,
             serverPath: SERVER_PATH,
             needsHashlineServer: armNeedsHashlineServer(arm),
+            timeoutMs: sessionTimeoutMs,
           });
           if (res.unavailable) unavailable++;
 

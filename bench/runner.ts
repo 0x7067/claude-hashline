@@ -66,6 +66,8 @@ export interface ClaudePOptions {
   needsHashlineServer?: boolean;
   /** Override the binary (tests inject a fake). Default: "claude". */
   bin?: string;
+  /** Per-session wall-clock cap in ms; the process is killed past it. Default 300000. */
+  timeoutMs?: number;
 }
 
 export interface ClaudePResult {
@@ -133,6 +135,10 @@ export async function runClaudeP(opts: ClaudePOptions): Promise<ClaudePResult> {
       stdin: new TextEncoder().encode(opts.prompt),
       stdout: "pipe",
       stderr: "pipe",
+      // Bound each session so one hung run can't stall an unattended sweep;
+      // a killed process yields a partial transcript, scored as a failure.
+      timeout: opts.timeoutMs ?? 300_000,
+      killSignal: "SIGTERM",
     });
     const transcript = await new Response(proc.stdout).text();
     const exitCode = await proc.exited;
