@@ -24,6 +24,17 @@ function walk(dir: string): string[] {
 }
 
 function corpusPin(corpusDir: string): string {
+  // A vendored corpus declares its true provenance in CORPUS.md, since the
+  // directory now lives inside this repo and `git rev-parse` here would
+  // misleadingly report the hashline repo's HEAD, not the source's.
+  try {
+    const md = readFileSync(path.join(corpusDir, "CORPUS.md"), "utf8");
+    const source = md.match(/\*\*Source:\*\*\s*`([^`]+)`/)?.[1];
+    const commit = md.match(/\*\*Commit:\*\*\s*`([^`]+)`/)?.[1];
+    if (source) return commit ? `${source}@${commit}` : source;
+  } catch {
+    // no CORPUS.md — fall through to git
+  }
   try {
     const rev = Bun.spawnSync(["git", "-C", corpusDir, "rev-parse", "--short", "HEAD"]).stdout.toString().trim();
     return rev ? `${path.basename(corpusDir)}@${rev}` : path.basename(corpusDir);
