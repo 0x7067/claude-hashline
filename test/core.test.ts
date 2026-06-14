@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { createContext, hashlineEdit, hashlineRead, type HashlineContext } from "../src/core.ts";
+import { createContext, hashlineEdit, hashlineRead, hashlineSearch, type HashlineContext } from "../src/core.ts";
 import { JailedFilesystem } from "../src/jailed-fs.ts";
 
 let root: string;
@@ -154,5 +154,102 @@ describe("file creation (R4/KTD10)", () => {
     const res = await hashlineEdit(ctx, `[dup.ts]\ninsert head:\n+nope`);
     expect(res.isError).toBe(true);
     expect(res.text).toMatch(/already exists/);
+  });
+});
+
+describe("hashlineSearch", () => {
+  test("matches across files, each under its own [PATH#TAG], match/context markers (R2)", async () => {
+    writeFileSync(path.join(root, "a.ts"), "const x = 1;\nconst target = 2;\nconst y = 3;\n");
+    writeFileSync(path.join(root, "b.ts"), "let z = 0;\nconst target = 9;\n");
+    const out = await hashlineSearch(ctx, { pattern: "target" });
+    expect(out).toMatch(/\[a\.ts#[0-9A-F]{4}\]/);
+    expect(out).toMatch(/\[b\.ts#[0-9A-F]{4}\]/);
+    expect(out).toContain("*2:const target = 2;"); // match line marked with *
+    expect(out).toContain(" 1:const x = 1;"); // context above (leading space)
+    expect(out).toContain(" 3:const y = 3;"); // context below (leading space)
+  });
+
+  test("edit-without-read: an edit anchored on a search hit applies with no prior read (R3)", async () => {
+    writeFileSync(path.join(root, "c.ts"), "const a = 1;\nconst flag = true;\nconst b = 2;\n");
+    const out = await hashlineSearch(ctx, { pattern: "flag" });
+    const header = /(\[c\.ts#[0-9A-F]{4}\])/.exec(out)?.[1];
+    expect(header).toBeTruthy();
+    const res = await hashlineEdit(ctx, `${header}\nreplace 2..2:\n+const flag = false;`);
+    expect(res.isError).toBe(false);
+    expect(readFileSync(path.join(root, "c.ts"), "utf8")).toContain("const flag = false;");
+  });
+
+  test("hits one line apart merge into a single contiguous window (KTD4)", async () => {
+    writeFileSync(path.join(root, "d.ts"), "hit one\nmiddle\nhit two\ntail\n");
+    const out = await hashlineSearch(ctx, { pattern: "hit" });
+    // Both hits + the line between them render once, no duplicated rows.
+    expect(out.match(/^ 2:middle$/m)).toBeTruthy(); // context between two hits
+    expect((out.match(/\*1:hit one/g) ?? []).length).toBe(1);
+    expect((out.match(/\*3:hit two/g) ?? []).length).toBe(1);
+  });
+
+  test("case-insensitive search with i flag (mirrors oh-my-pi)", async () => {
+    writeFileSync(path.join(root, "ci.ts"), "const Target = 1;\n");
+    expect(await hashlineSearch(ctx, { pattern: "target" })).toBe("No matches found");
+    expect(await hashlineSearch(ctx, { pattern: "target", i: true })).toContain("*1:const Target = 1;");
+  });
+
+  test("maxResults caps output and appends a truncation tail (R4/KTD5)", async () => {
+    const lines = Array.from({ length: 10 }, (_, i) => `match ${i}`).join("\n");
+    writeFileSync(path.join(root, "many.ts"), `${lines}\n`);
+    const out = await hashlineSearch(ctx, { pattern: "match", maxResults: 3 });
+    expect(out).toMatch(/truncated at 3 matches/);
+  });
+
+  test("symlink escaping the root is never matched or recorded (R5)", async () => {
+    const outside = mkdtempSync(path.join(tmpdir(), "hashline-outside-"));
+    writeFileSync(path.join(outside, "secret.ts"), "const secret = 1;\n");
+    symlinkSync(path.join(outside, "secret.ts"), path.join(root, "link.ts"));
+    const out = await hashlineSearch(ctx, { pattern: "secret" });
+    expect(out).toBe("No matches found");
+    rmSync(outside, { recursive: true, force: true });
+  });
+
+  test("no matches returns a self-correcting string, not an error", async () => {
+    writeFileSync(path.join(root, "e.ts"), "nothing here\n");
+    const out = await hashlineSearch(ctx, { pattern: "zzz_absent" });
+    expect(out).toBe("No matches found");
+  });
+
+  test("over-long lines are truncated to 512 cols with an ellipsis (oh-my-pi maxColumns)", async () => {
+    writeFileSync(path.join(root, "long.ts"), `const big = "${"x".repeat(600)}"; // hit\n`);
+    const out = await hashlineSearch(ctx, { pattern: "hit" });
+    expect(out).toContain("…");
+    const row = out.split("\n").find(l => l.startsWith("*1:"));
+    expect(row && row.length).toBeLessThanOrEqual(3 + 512 + 1); // "*1:" + 512 chars + "…"
+  });
+
+  test("walked-but-unmatched files are not snapshotted (KTD2)", async () => {
+    writeFileSync(path.join(root, "matched.ts"), "const target = 1;\n");
+    writeFileSync(path.join(root, "other.ts"), "const unrelated = 2;\n");
+    await hashlineSearch(ctx, { pattern: "target" });
+    // The unmatched file has no snapshot, so editing it is refused (read-before-edit gate).
+    const res = await hashlineEdit(ctx, `[other.ts#AAAA]\nreplace 1..1:\n+const unrelated = 3;`);
+    expect(res.isError).toBe(true);
+    expect(res.text).toMatch(/no hashline read recorded/i);
+  });
+
+  test("gitignored files are skipped by default, included with gitignore:false (oh-my-pi parity)", async () => {
+    writeFileSync(path.join(root, ".gitignore"), "*.log\n");
+    writeFileSync(path.join(root, "keep.ts"), "const hit = 1;\n");
+    writeFileSync(path.join(root, "debug.log"), "hit in log\n");
+
+    const def = await hashlineSearch(ctx, { pattern: "hit" });
+    expect(def).toContain("keep.ts"); // non-ignored sibling still matches
+    expect(def).not.toContain("debug.log"); // ignored file excluded by default
+
+    const all = await hashlineSearch(ctx, { pattern: "hit", gitignore: false });
+    expect(all).toContain("debug.log"); // opt-out includes it
+  });
+
+  test("no .gitignore present behaves as before (no regression)", async () => {
+    writeFileSync(path.join(root, "plain.ts"), "const hit = 1;\n");
+    const out = await hashlineSearch(ctx, { pattern: "hit" });
+    expect(out).toContain("plain.ts");
   });
 });

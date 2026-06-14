@@ -10,7 +10,10 @@ The line-anchored patch format this project provides as an MCP edit tool: a per-
 A read returns a header carrying the file's path and a TAG, then one row per line prefixed with its line number and a colon. To edit, the caller copies the header verbatim and references those line numbers in Hunks. A file must be read before it can be edited, and re-read after each edit to obtain a fresh TAG.
 
 ### TAG
-The short content hash of an entire file, carried in a read/edit header to prove the file is unchanged since it was read. An edit whose TAG no longer matches the file's current contents is rejected, forcing a re-read — this is the optimistic-concurrency guard against editing a stale view.
+The short content hash of an entire file — the hash of its current Snapshot — carried in a read/search/edit header to prove the file is unchanged since it was read. An edit whose TAG no longer matches the file's current contents is rejected, forcing a re-read — this is the optimistic-concurrency guard against editing a stale view.
+
+### Snapshot
+The recorded whole-file content, keyed by canonical absolute path, from which a TAG is minted. A tool that records one is a *snapshot producer*: `read`, `search`, and `write` all record a snapshot for the files they touch. The read-before-edit gate refuses to edit any file with no snapshot recorded this session, so every edit anchors on content a producer actually returned — which is why `search` can edit a matched file with no prior `read`.
 
 ### Hunk
 A single edit operation (replace, delete, or insert) introduced by a header that names its target line(s); the text rows that follow apply to that operation. A body row with no preceding Hunk header is rejected — the error that the colon-range mistake (see Line range) produces.

@@ -20,14 +20,19 @@ replace 2..2:
 
 The patch engine is the published, MIT-licensed
 [`@oh-my-pi/hashline`](https://github.com/can1357/oh-my-pi) (see `NOTICE`). This
-plugin is the Claude Code integration: an MCP server exposing `read`/`edit`, and
-a hook that blocks the built-in editors so the model uses hashline.
+plugin is the Claude Code integration: an MCP server exposing `read`/`search`/`edit`,
+and a hook that blocks the built-in editors so the model uses hashline.
 
 ## How it works
 
-- **MCP server** (`src/server.ts`, run under Bun) exposes two tools,
-  `mcp__plugin_claude-hashline_hashline__read` and `…__edit`.
+- **MCP server** (`src/server.ts`, run under Bun) exposes three tools,
+  `mcp__plugin_claude-hashline_hashline__{read,search,edit}`.
   - `read` tags output and records a whole-file snapshot keyed by absolute path.
+  - `search` regex-matches across the workspace and returns hits in the same
+    tagged format, recording a snapshot for each matched file so the model can
+    `edit` straight off a hit — no whole-file `read` first. Respects
+    `.gitignore` by default; skips `node_modules`, dot-directories, and
+    oversized files.
   - `edit` runs three gates the engine doesn't — **path containment** (edits
     can't escape the workspace), **read-before-edit** (you must `read` a file
     first), and **file creation** (a tagless `[path]` header creates a file) —
