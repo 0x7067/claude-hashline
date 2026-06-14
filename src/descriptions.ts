@@ -18,6 +18,27 @@ TAG is a 4-hex content hash of the whole file. To edit, copy the header verbatim
 into the \`edit\` tool and reference the bare line numbers. Re-read after any edit
 to get a fresh TAG. Use \`offset\`/\`limit\` for large files.`;
 
+export const SEARCH_TOOL_DESCRIPTION = `Search the workspace for a regex pattern and return matches ready to edit.
+
+Prefer this over the built-in Grep when your goal is to locate code and then
+change it: matches come back in the SAME hashline format as \`read\` — a
+\`[PATH#TAG]\` header per file followed by \`LINE:TEXT\` rows — and each matched
+file is snapshotted, so you can \`edit\` straight off a hit WITHOUT a separate
+\`read\` first.
+
+    [src/app.ts#9A46]
+    11:  const ready = true;
+    12:  return ready;
+
+Output shows each hit with a few lines of surrounding context. To change a line
+you can see, copy that file's \`[PATH#TAG]\` header into \`edit\` and reference the
+line number. If you need lines OUTSIDE the shown context, \`read\` that file for
+the full tagged view.
+
+Args: \`pattern\` (regex source, required), \`flags\` (e.g. "i"), \`maxResults\`
+(cap on returned matches; results truncate with a hint to narrow the pattern).
+Skips node_modules, dot-directories, and very large files.`;
+
 export const EDIT_TOOL_DESCRIPTION = `Apply line-anchored edits to a file using the hashline patch language.
 
 Each section starts with the \`[PATH#TAG]\` header from your latest \`read\` of that

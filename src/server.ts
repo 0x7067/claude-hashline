@@ -8,8 +8,8 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
-import { createContext, hashlineEdit, hashlineRead } from "./core.ts";
-import { EDIT_TOOL_DESCRIPTION, READ_TOOL_DESCRIPTION } from "./descriptions.ts";
+import { createContext, hashlineEdit, hashlineRead, hashlineSearch } from "./core.ts";
+import { EDIT_TOOL_DESCRIPTION, READ_TOOL_DESCRIPTION, SEARCH_TOOL_DESCRIPTION } from "./descriptions.ts";
 
 const ctx = createContext();
 
@@ -28,6 +28,26 @@ server.registerTool(
   async ({ path, offset, limit }) => {
     try {
       const text = await hashlineRead(ctx, { path, offset, limit });
+      return { content: [{ type: "text", text }] };
+    } catch (err) {
+      return { content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }], isError: true };
+    }
+  },
+);
+
+server.registerTool(
+  "search",
+  {
+    description: SEARCH_TOOL_DESCRIPTION,
+    inputSchema: {
+      pattern: z.string().describe("Regex source matched against each line."),
+      flags: z.string().optional().describe('Optional RegExp flags, e.g. "i" for case-insensitive.'),
+      maxResults: z.number().int().positive().optional().describe("Cap on total match lines returned."),
+    },
+  },
+  async ({ pattern, flags, maxResults }) => {
+    try {
+      const text = await hashlineSearch(ctx, { pattern, flags, maxResults });
       return { content: [{ type: "text", text }] };
     } catch (err) {
       return { content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }], isError: true };
