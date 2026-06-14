@@ -1,0 +1,13 @@
+{
+  "basicMemory": {
+    "primaryProject": "main",
+    "secondaryProjects": [],
+    "captureFolder": "claude-hashline/sessions",
+    "rememberFolder": "claude-hashline/bm-remember",
+    "recallTimeframe": "3d",
+    "preCompactCapture": "extractive",
+    "placementConventions": "Notes for the claude-hashline repo live under claude-hashline/ in the shared `main` project (MCP server is globally pinned to main). Folders: claude-hashline/sessions (resume checkpoints), claude-hashline/decisions (patch-grammar / hashing / edit-semantics choices), claude-hashline/tasks (in-flight work), claude-hashline/notes (design rationale, concepts, investigations). Schemas (Session/Decision/Task) are shared at schemas/ in main. Light structure — folders appear as notes land.",
+    "teamProjects": {}
+  },
+  "outputStyle": "basic-memory"
+}
