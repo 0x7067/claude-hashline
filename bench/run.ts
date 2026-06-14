@@ -14,7 +14,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { renderReport } from "./report.ts";
-import { aggregate, type RunRecord, scoreFixture } from "./score.ts";
+import { aggregate, FORMATTER_ID, type RunRecord, scoreFixture } from "./score.ts";
 import { type Arm, armNeedsHashlineServer, disallowedToolsFor, parseTranscript, runClaudeP } from "./runner.ts";
 
 /** Absolute path to the hashline MCP server entry, loaded into hashline arms. */
@@ -79,6 +79,17 @@ async function main() {
     }
   })();
 
+  // Prettier options from the corpus config copied in by generate.ts; the
+  // pinned-formatter oracle uses the source project's own rules.
+  const prettierOptions: Record<string, unknown> = (() => {
+    try {
+      return JSON.parse(readFileSync(path.join(fixturesDir, ".prettierrc.json"), "utf8"));
+    } catch {
+      return {};
+    }
+  })();
+  const formatterId = `${FORMATTER_ID} (corpus .prettierrc)`;
+
   const fixtures = loadFixtures(fixturesDir);
   const parentRoot = mkdtempSync(path.join(tmpdir(), "hashline-bench-"));
   const records: RunRecord[] = [];
@@ -110,7 +121,7 @@ async function main() {
               return fx.buggy;
             }
           })();
-          const score = scoreFixture({ postEdit, expected: fx.expected });
+          const score = await scoreFixture({ postEdit, expected: fx.expected, targetName: fx.targetName, prettierOptions });
           const metrics = parseTranscript(res.transcript);
           records.push({
             model,
@@ -135,7 +146,7 @@ async function main() {
   }
 
   const report = renderReport(aggregate(records), {
-    formatterId: "deterministic-normalize@0.1 (placeholder; pin a real formatter)",
+    formatterId,
     corpusPin: manifest.corpusPin ?? "unknown",
     models,
     ranFamiliarityArm: arms.includes("familiarity"),

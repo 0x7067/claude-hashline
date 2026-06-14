@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mutationsFor } from "../bench/mutate.ts";
-import { aggregate, formatDeterministic, type RunRecord, scoreFixture } from "../bench/score.ts";
+import { aggregate, formatCanonical, type RunRecord, scoreFixture } from "../bench/score.ts";
 import { armNeedsHashlineServer, disallowedToolsFor, parseTranscript } from "../bench/runner.ts";
 
 describe("mutations (R10)", () => {
@@ -37,21 +37,32 @@ describe("mutations (R10)", () => {
   });
 });
 
-describe("scoring (R14)", () => {
-  test("pass when post-edit equals expected", () => {
-    expect(scoreFixture({ postEdit: "a\nb\n", expected: "a\nb\n" }).pass).toBe(true);
+describe("scoring (R14) with pinned prettier", () => {
+  const opts = { semi: true, singleQuote: true };
+  const tn = "x.ts";
+  const src = "export const x = 1;\n";
+
+  test("pass when post-edit equals expected", async () => {
+    expect((await scoreFixture({ postEdit: src, expected: src, targetName: tn, prettierOptions: opts })).pass).toBe(true);
   });
-  test("fail when content differs", () => {
-    expect(scoreFixture({ postEdit: "a\nX\n", expected: "a\nb\n" }).pass).toBe(false);
+  test("fail when content differs semantically", async () => {
+    const post = "export const x = 2;\n";
+    expect((await scoreFixture({ postEdit: post, expected: src, targetName: tn, prettierOptions: opts })).pass).toBe(false);
   });
-  test("whitespace-only deviation passes but is flagged masked (adv-05)", () => {
-    const s = scoreFixture({ postEdit: "a  \nb\n", expected: "a\nb\n" });
+  test("formatting-only deviation passes but is flagged masked (adv-05)", async () => {
+    // Same code, different whitespace/quotes/semis — prettier normalizes both.
+    const post = 'export const x=1';
+    const s = await scoreFixture({ postEdit: post, expected: src, targetName: tn, prettierOptions: opts });
     expect(s.pass).toBe(true);
     expect(s.passedOnlyAfterFormat).toBe(true);
   });
-  test("formatter is deterministic and idempotent", () => {
-    const once = formatDeterministic("a \n\n\n");
-    expect(formatDeterministic(once)).toBe(once);
+  test("broken syntax never compares equal (unformattable sentinel)", async () => {
+    const post = "export const x = ;\n"; // parse error
+    expect((await scoreFixture({ postEdit: post, expected: src, targetName: tn, prettierOptions: opts })).pass).toBe(false);
+  });
+  test("formatter is deterministic and idempotent", async () => {
+    const once = await formatCanonical("export const  x=1", tn, opts);
+    expect(await formatCanonical(once, tn, opts)).toBe(once);
   });
 });
 

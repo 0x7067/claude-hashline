@@ -86,8 +86,23 @@ function main() {
     }
   }
 
-  writeFileSync(path.join(outDir, "manifest.json"), JSON.stringify({ corpusPin: corpusPin(corpusDir), fixtures: count, generatedFrom: corpusDir }, null, 2));
-  console.log(`Generated ${count} fixtures into ${outDir} (corpus ${corpusPin(corpusDir)})`);
+  // Copy the corpus's prettier config into the fixtures dir so scoring uses
+  // the source project's own formatting rules (pinned-formatter oracle).
+  let prettierConfig = false;
+  for (const name of [".prettierrc.json", ".prettierrc"]) {
+    try {
+      const cfg = readFileSync(path.join(corpusDir, name), "utf8");
+      writeFileSync(path.join(outDir, ".prettierrc.json"), cfg);
+      prettierConfig = true;
+      break;
+    } catch {
+      // not present — try next
+    }
+  }
+
+  const pin = corpusPin(corpusDir);
+  writeFileSync(path.join(outDir, "manifest.json"), JSON.stringify({ corpusPin: pin, fixtures: count, generatedFrom: corpusDir, prettierConfig }, null, 2));
+  console.log(`Generated ${count} fixtures into ${outDir} (corpus ${pin}${prettierConfig ? "" : "; no prettier config found"})`);
 }
 
 main();
