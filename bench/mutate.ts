@@ -46,16 +46,62 @@ function lineOccursMoreThanOnce(lines: string[], idx: number): boolean {
   return lines.filter(l => l === target).length > 1;
 }
 
+/**
+ * Blank out the non-code regions of each line — block comments (stateful across
+ * lines), line comments, and string/template literals — preserving length and
+ * column positions. Operator rules are matched against this masked view so a
+ * token like `+` inside a comment or string is never selected as a "bug"
+ * (otherwise the task describes arithmetic that doesn't exist; see fixture
+ * 0007-operator-add). Block-comment state carries across lines; string state
+ * does not (multi-line templates are treated conservatively as code).
+ */
+function maskNonCode(lines: string[]): string[] {
+  const masked: string[] = [];
+  let inBlock = false;
+  for (const raw of lines) {
+    let out = "";
+    let i = 0;
+    let inStr: string | null = null;
+    while (i < raw.length) {
+      const two = raw.slice(i, i + 2);
+      const c = raw[i];
+      if (inBlock) {
+        if (two === "*/") { out += "  "; i += 2; inBlock = false; }
+        else { out += " "; i += 1; }
+      } else if (inStr) {
+        if (c === "\\") { out += "  "; i += 2; }
+        else if (c === inStr) { out += " "; i += 1; inStr = null; }
+        else { out += " "; i += 1; }
+      } else if (two === "/*") {
+        out += "  "; i += 2; inBlock = true;
+      } else if (two === "//") {
+        out += " ".repeat(raw.length - i); break;
+      } else if (c === '"' || c === "'" || c === "`") {
+        out += " "; i += 1; inStr = c;
+      } else {
+        out += c; i += 1;
+      }
+    }
+    masked.push(out);
+  }
+  return masked;
+}
+
 /** All single-site mutations applicable to `source`, across rule + guard kinds. */
 export function mutationsFor(source: string): Mutation[] {
   const lines = source.split("\n");
+  const masked = maskNonCode(lines);
   const out: Mutation[] = [];
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     for (const rule of RULES) {
-      if (!rule.find.test(line)) continue;
-      const mutatedLine = line.replace(rule.find, rule.replace);
+      // Match against the masked view so comment/string tokens are skipped,
+      // but apply the replacement at that exact index in the real line.
+      const m = rule.find.exec(masked[i]);
+      if (!m) continue;
+      const idx = m.index;
+      const mutatedLine = line.slice(0, idx) + line.slice(idx).replace(rule.find, rule.replace);
       if (mutatedLine === line) continue;
       const buggyLines = [...lines];
       buggyLines[i] = mutatedLine;

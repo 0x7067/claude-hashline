@@ -5,7 +5,7 @@
  *
  * Usage: bun run bench/generate.ts <corpus-dir> <out-dir> [--per-file N]
  */
-import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import * as path from "node:path";
 import { type Difficulty, mutationsFor } from "./mutate.ts";
 
@@ -53,6 +53,13 @@ function main() {
   const perFile = perFileIdx > -1 ? Number(Bun.argv[perFileIdx + 1]) : 2;
 
   mkdirSync(outDir, { recursive: true });
+  // Clear stale fixtures first. Fixtures are written by sequential index
+  // (NNNN-*), so a regeneration that yields fewer fixtures would otherwise
+  // leave orphaned dirs behind and silently poison a benchmark sweep. Only
+  // remove fixture-shaped subdirs, never arbitrary outDir contents.
+  for (const entry of readdirSync(outDir)) {
+    if (/^\d{4}-/.test(entry)) rmSync(path.join(outDir, entry), { recursive: true, force: true });
+  }
   const files = walk(corpusDir);
   let count = 0;
 

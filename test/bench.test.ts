@@ -36,6 +36,17 @@ describe("mutations (R10)", () => {
     const m = mutationsFor(dup).find(x => x.kind === "boolean-flip");
     expect(m?.difficulty).toBe("hard-anchor");
   });
+
+  test("operators inside comments and strings are never mutated (fixture 0007 regression)", () => {
+    // A `+` used as prose in a comment, and `===`/`+` inside a string literal.
+    const src = "// names + a small set\nconst s = 'a === b plus c';\nconst n = 1;\n";
+    const muts = mutationsFor(src);
+    // No mutation may touch the comment line (1) or the string line (2).
+    for (const m of muts) expect(m.line).toBe(3);
+    // And specifically no arithmetic/equality bug should be fabricated from prose.
+    expect(muts.some(m => m.kind === "operator-add")).toBe(false);
+    expect(muts.some(m => m.kind === "operator-eq")).toBe(false);
+  });
 });
 
 describe("scoring (R14) with pinned prettier", () => {
