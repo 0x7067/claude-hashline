@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { createContext, hashlineEdit, hashlineRead, type HashlineContext } from "../src/core.ts";
+import { JailedFilesystem } from "../src/jailed-fs.ts";
 
 let root: string;
 let ctx: HashlineContext;
@@ -102,6 +103,30 @@ describe("path containment in edit (KTD9 / SEC-002)", () => {
     const res = await hashlineEdit(ctx, `[../../evil.ts#AAAA]\nreplace 1..1:\n+pwned`);
     expect(res.isError).toBe(true);
     expect(res.text).toMatch(/outside the workspace/);
+  });
+});
+
+describe("symlinked-root canonicalization (jail false-positive regression)", () => {
+  // The benchmark surfaced this: a workspace under a symlinked path (macOS
+  // /var -> /private/var) stored a non-canonical root, so a valid in-workspace
+  // file given by its realpath read as an escape and was wrongly rejected.
+  test("a realpath'd in-workspace path is accepted, real escapes still rejected", () => {
+    const base = mkdtempSync(path.join(tmpdir(), "hashline-sym-"));
+    try {
+      const realDir = path.join(base, "real");
+      mkdirSync(realDir);
+      const linkDir = path.join(base, "link");
+      symlinkSync(realDir, linkDir);
+      const fsj = new JailedFilesystem(linkDir); // rooted at the symlink
+
+      // Same file addressed via the canonical (realpath) prefix must resolve inside.
+      const viaReal = path.join(realpathSync(linkDir), "f.ts");
+      expect(() => fsj.resolveInside(viaReal)).not.toThrow();
+      // A genuine escape still throws.
+      expect(() => fsj.resolveInside(path.join(base, "outside.ts"))).toThrow();
+    } finally {
+      rmSync(base, { recursive: true, force: true });
+    }
   });
 });
 

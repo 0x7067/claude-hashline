@@ -1,5 +1,30 @@
+import { realpathSync } from "node:fs";
 import * as path from "node:path";
 import { NodeFilesystem } from "@oh-my-pi/hashline";
+
+/**
+ * Canonicalize an absolute path by resolving symlinks. The target may not exist
+ * yet (file creation), so realpath the longest existing ancestor and re-append
+ * the remaining segments. This makes containment robust to symlinked roots
+ * (e.g. macOS `/var` -> `/private/var`, where a non-canonical root would
+ * spuriously reject valid in-workspace paths) AND defeats symlink-based escapes
+ * (a link inside the workspace pointing out resolves to its real target).
+ */
+function canonicalize(abs: string): string {
+  const segs: string[] = [];
+  let cur = abs;
+  for (;;) {
+    try {
+      const real = realpathSync(cur);
+      return segs.length ? path.join(real, ...segs.reverse()) : real;
+    } catch {
+      const parent = path.dirname(cur);
+      if (parent === cur) return abs; // reached fs root; nothing to resolve
+      segs.push(path.basename(cur));
+      cur = parent;
+    }
+  }
+}
 
 /**
  * Error thrown when a patch section's path escapes the workspace root.
@@ -30,12 +55,15 @@ export class JailedFilesystem extends NodeFilesystem {
 
   constructor(root: string) {
     super();
-    this.root = path.resolve(root);
+    this.root = canonicalize(path.resolve(root));
   }
 
-  /** Resolve `p` against the root and reject anything that escapes it. */
+  /** Resolve `p` against the root and reject anything that escapes it. Both the
+   * root and the target are canonicalized (symlinks resolved) so the prefix
+   * check compares real paths — otherwise a symlinked root or a realpath'd
+   * input would falsely read as an escape (and a symlink escape would slip). */
   resolveInside(p: string): string {
-    const resolved = path.resolve(this.root, p);
+    const resolved = canonicalize(path.resolve(this.root, p));
     if (resolved !== this.root && !resolved.startsWith(this.root + path.sep)) {
       throw new PathEscapeError(p, resolved, this.root);
     }
