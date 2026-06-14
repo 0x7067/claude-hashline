@@ -193,6 +193,22 @@ function takeaways(): string[] {
 
 const tks = takeaways();
 
+// --json: emit machine-readable metrics for the optimization loop and exit
+// before the human-facing ASCII. Reports the hashline/control "all" cells plus
+// the edit-failure classification.
+if (Bun.argv.includes("--json")) {
+  const cellMetric = (arm: string) => {
+    const c = cells.find(x => x.arm === arm && x.difficulty === "all");
+    return c ? { pass: c.pass, editFail: c.editFail, tokens: c.tokens, turns: c.turns, n: c.n } : null;
+  };
+  const byArmModel: Record<string, any> = {};
+  for (const c of cells.filter(x => x.difficulty === "all")) {
+    byArmModel[`${shortModel(c.model)}|${c.arm}`] = { pass: c.pass, editFail: c.editFail, tokens: c.tokens, turns: c.turns, n: c.n };
+  }
+  console.log(JSON.stringify({ corpusPin, models, hashline: cellMetric("hashline"), control: cellMetric("control"), byArmModel, classification: cls ?? null }));
+  process.exit(0);
+}
+
 const term = [
   "",
   `Hashline benchmark — ${corpusPin}`,
