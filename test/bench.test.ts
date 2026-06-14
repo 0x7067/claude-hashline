@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mutationsFor } from "../bench/mutate.ts";
 import { aggregate, formatCanonical, type RunRecord, scoreFixture } from "../bench/score.ts";
 import { armNeedsHashlineServer, disallowedToolsFor, parseTranscript } from "../bench/runner.ts";
+import { buildSearchPrompt, computeAnchor, pickDistractors } from "../bench/search-mode.ts";
 
 describe("mutations (R10)", () => {
   const src = "export function cmp(a, b) {\n  if (a === b) return 0;\n  for (let i = 0; i <= b; i++) {}\n  return a + b;\n}\n";
@@ -69,7 +70,7 @@ describe("scoring (R14) with pinned prettier", () => {
 describe("aggregation stratifies by difficulty (R15)", () => {
   const rec = (over: Partial<RunRecord>): RunRecord => ({
     fixture: "fx", model: "m", arm: "hashline", difficulty: "simple", pass: true,
-    passedOnlyAfterFormat: false, outputTokens: 100, rejections: 0, turns: 1, ...over,
+    passedOnlyAfterFormat: false, outputTokens: 100, rejections: 0, turns: 1, searchCalls: 0, ...over,
   });
   test("emits an 'all' cell plus per-difficulty cells", () => {
     const cells = aggregate([
@@ -122,5 +123,61 @@ describe("arms (R12) and transcript parsing (R14)", () => {
     expect(m.outputTokens).toBe(302); // result envelope, not 50+60+302
     expect(m.turns).toBe(4); // result num_turns, not 2 assistant lines
     expect(m.rejections).toBe(3); // 1 errored tool_result + 2 permission denials
+  });
+
+  test("counts search/locate tool calls (hashline search + built-in Grep)", () => {
+    const transcript = [
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "mcp__hashline__search", input: {} }] } }),
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "Grep", input: {} }, { type: "text", text: "ok" }] } }),
+      JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", name: "mcp__hashline__edit", input: {} }] } }),
+    ].join("\n");
+    expect(parseTranscript(transcript).searchCalls).toBe(2);
+  });
+
+  test("search-mode locks down built-in navigation for the hashline arm", () => {
+    const d = disallowedToolsFor("hashline", true);
+    expect(d).toContain("Grep");
+    expect(d).toContain("Glob");
+    expect(d).toContain("Read");
+    expect(d).toContain("Edit");
+    // Control is unaffected by search mode (keeps its built-ins).
+    expect(disallowedToolsFor("control", true)).toEqual(disallowedToolsFor("control", false));
+  });
+});
+
+describe("search-mode task construction (plan 003)", () => {
+  const expected = [
+    "export function useCommitFilteringAndNavigation(commits) {",
+    "  if (!commits) return [];",
+    "  return commits.filter(Boolean);",
+    "}",
+    "",
+  ].join("\n");
+
+  test("anchor picks the enclosing declaration name near the mutated line", () => {
+    expect(computeAnchor(expected, 2)).toBe("useCommitFilteringAndNavigation");
+  });
+
+  test("search prompt drops filename and line, keeps the bug description, adds the anchor hint", () => {
+    const task = "# Fix the bug\n\nA guard clause was removed. The issue is on or near line 2.\n\nFile: `nav.ts`.\n";
+    const prompt = buildSearchPrompt(task, "useCommitFilteringAndNavigation");
+    expect(prompt).not.toContain("nav.ts");
+    expect(prompt).not.toMatch(/line 2/);
+    expect(prompt).toContain("guard clause was removed");
+    expect(prompt).toContain("search the workspace");
+    expect(prompt).toContain("`useCommitFilteringAndNavigation`");
+  });
+
+  test("distractors dedup by name, exclude anchor-containing files and the target", () => {
+    const others = [
+      { name: "a.ts", content: "const a = 1;" },
+      { name: "a.ts", content: "dup name" },
+      { name: "b.ts", content: "uses useCommitFilteringAndNavigation here" }, // contains anchor
+      { name: "c.ts", content: "const c = 3;" },
+      { name: "target.ts", content: "x" }, // same as target name
+    ];
+    const picked = pickDistractors(others, 5, "useCommitFilteringAndNavigation", "target.ts");
+    const names = picked.map(p => p.name);
+    expect(names).toEqual(["a.ts", "c.ts"]);
   });
 });

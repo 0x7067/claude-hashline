@@ -15,12 +15,12 @@ export interface ReportMeta {
 export function renderReport(cells: Cell[], meta: ReportMeta): string {
   const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
   const num = (x: number) => x.toFixed(1);
-  const header = "| model | arm | difficulty | n | pass | edit-fail/task | out-tokens | turns | masked |";
-  const sep = "|---|---|---|---|---|---|---|---|---|";
+  const header = "| model | arm | difficulty | n | pass | edit-fail/task | search/task | out-tokens | turns | masked |";
+  const sep = "|---|---|---|---|---|---|---|---|---|---|";
   const rows = cells
     .slice()
     .sort((a, b) => a.model.localeCompare(b.model) || a.arm.localeCompare(b.arm) || String(a.difficulty).localeCompare(String(b.difficulty)))
-    .map(c => `| ${c.model} | ${c.arm} | ${c.difficulty} | ${c.n} | ${pct(c.passRate)} | ${num(c.editFailureRate)} | ${num(c.meanOutputTokens)} | ${num(c.meanTurns)} | ${c.maskedPasses} |`);
+    .map(c => `| ${c.model} | ${c.arm} | ${c.difficulty} | ${c.n} | ${pct(c.passRate)} | ${num(c.editFailureRate)} | ${num(c.meanSearchCalls)} | ${num(c.meanOutputTokens)} | ${num(c.meanTurns)} | ${c.maskedPasses} |`);
 
   const caveat = meta.ranFamiliarityArm
     ? "_Familiarity-control arm ran: the format effect is separated from tool-name unfamiliarity._"

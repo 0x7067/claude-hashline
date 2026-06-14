@@ -24,15 +24,21 @@ export type Arm = "hashline" | "control" | "familiarity";
 export const HASHLINE_SERVER = "hashline";
 const HASHLINE_TOOLS = [
   `mcp__${HASHLINE_SERVER}__read`,
+  `mcp__${HASHLINE_SERVER}__search`,
   `mcp__${HASHLINE_SERVER}__edit`,
 ];
 
-/** Tools to disallow for an arm. */
-export function disallowedToolsFor(arm: Arm): string[] {
+/** Tools to disallow for an arm. In `searchMode` the hashline/familiarity arms
+ * also block built-in navigation (Read/Grep/Glob) so the model must locate files
+ * through `mcp__hashline__search` — otherwise it would grep with the built-in. */
+export function disallowedToolsFor(arm: Arm, searchMode = false): string[] {
+  const hashlineLockdown = searchMode
+    ? ["Edit", "Write", "NotebookEdit", "Read", "Grep", "Glob"]
+    : ["Edit", "Write", "NotebookEdit"];
   switch (arm) {
     case "hashline":
       // Force the model onto the hashline MCP tools.
-      return ["Edit", "Write", "NotebookEdit"];
+      return hashlineLockdown;
     case "control":
       // The real default: built-in editor allowed, hashline suppressed.
       // Enumerate both names AND the glob (feas-05: glob support unverified).
@@ -41,7 +47,7 @@ export function disallowedToolsFor(arm: Arm): string[] {
       // Optional arm (adv-02): hashline engine, but the model also keeps the
       // built-ins disallowed; the difference vs. hashline is a familiar tool
       // name / warm-up applied at the workspace layer, decided in the pilot.
-      return ["Edit", "Write", "NotebookEdit"];
+      return hashlineLockdown;
   }
 }
 
@@ -156,6 +162,26 @@ export interface TranscriptMetrics {
   rejections: number;
   /** Number of assistant turns observed. */
   turns: number;
+  /** Count of search/navigation tool calls (hashline search, built-in Grep/Glob). */
+  searchCalls: number;
+}
+
+/** Tool names that count as a search/locate action, either arm. */
+const SEARCH_TOOL_NAMES = new Set([`mcp__${HASHLINE_SERVER}__search`, "Grep", "Glob"]);
+
+/** Count `tool_use` blocks in an assistant message whose name is a search tool. */
+function countSearchToolUses(obj: unknown): number {
+  if (!obj || typeof obj !== "object") return 0;
+  const msg = (obj as Record<string, unknown>).message as Record<string, unknown> | undefined;
+  const arr = msg?.content;
+  if (!Array.isArray(arr)) return 0;
+  return arr.filter(
+    c =>
+      c &&
+      typeof c === "object" &&
+      (c as Record<string, unknown>).type === "tool_use" &&
+      SEARCH_TOOL_NAMES.has((c as Record<string, unknown>).name as string),
+  ).length;
 }
 
 const REJECTION_MARKERS = [
@@ -187,6 +213,7 @@ export function parseTranscript(transcript: string): TranscriptMetrics {
   let summedTokens = 0;
   let assistantTurns = 0;
   let rejections = 0;
+  let searchCalls = 0;
   let resultTokens: number | undefined;
   let resultTurns: number | undefined;
 
@@ -210,7 +237,10 @@ export function parseTranscript(transcript: string): TranscriptMetrics {
     }
     const usage = findUsage(obj);
     if (usage !== undefined) summedTokens += usage;
-    if (isAssistant(obj)) assistantTurns += 1;
+    if (isAssistant(obj)) {
+      assistantTurns += 1;
+      searchCalls += countSearchToolUses(obj);
+    }
     if (isErrorToolResult(obj) || markerHit(trimmed)) rejections += 1;
   }
 
@@ -218,6 +248,7 @@ export function parseTranscript(transcript: string): TranscriptMetrics {
     outputTokens: resultTokens ?? summedTokens,
     turns: resultTurns ?? assistantTurns,
     rejections,
+    searchCalls,
   };
 }
 

@@ -14,6 +14,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { renderReport } from "./report.ts";
+import { buildSearchPrompt, computeAnchor, type DistractorFile, pickDistractors } from "./search-mode.ts";
 import { aggregate, FORMATTER_ID, type RunRecord, scoreFixture } from "./score.ts";
 import { type Arm, armNeedsHashlineServer, disallowedToolsFor, parseTranscript, runClaudeP } from "./runner.ts";
 
@@ -32,6 +33,8 @@ interface Fixture {
   task: string;
   buggy: string;
   expected: string;
+  /** 1-indexed mutated line, for search-mode anchor derivation. */
+  line: number;
 }
 
 function loadFixtures(dir: string): Fixture[] {
@@ -48,6 +51,7 @@ function loadFixtures(dir: string): Fixture[] {
         task: readFileSync(path.join(fdir, "task.md"), "utf8"),
         buggy: readFileSync(path.join(fdir, meta.targetName), "utf8"),
         expected: readFileSync(path.join(fdir, `${meta.targetName}.expected`), "utf8"),
+        line: typeof meta.line === "number" ? meta.line : 1,
       });
     } catch {
       // not a fixture dir
@@ -59,7 +63,7 @@ function loadFixtures(dir: string): Fixture[] {
 async function main() {
   const fixturesDir = Bun.argv[2];
   if (!fixturesDir || fixturesDir.startsWith("--")) {
-    console.error("usage: bun run bench/run.ts <fixtures-dir> --models m1,m2 [--arms hashline,control] [--max-turns 30] [--out report.md]");
+    console.error("usage: bun run bench/run.ts <fixtures-dir> --models m1,m2 [--arms hashline,control] [--max-turns 30] [--out report.md] [--search] [--distractors 5]");
     process.exit(2);
   }
   const models = (arg("--models") ?? "").split(",").filter(Boolean);
@@ -71,6 +75,10 @@ async function main() {
   const maxTurns = Number(arg("--max-turns", "30"));
   const sessionTimeoutMs = Number(arg("--session-timeout", "300")) * 1000;
   const outPath = arg("--out");
+  // Search mode (plan 003): hide the target among distractors and withhold the
+  // path so the model must locate the file via search before editing.
+  const searchMode = Bun.argv.includes("--search");
+  const distractorCount = Number(arg("--distractors", "5"));
 
   const manifest = (() => {
     try {
@@ -104,12 +112,24 @@ async function main() {
           mkdirSync(ws, { recursive: true });
           writeFileSync(path.join(ws, fx.targetName), fx.buggy);
 
+          let prompt = fx.task;
+          if (searchMode) {
+            const anchor = computeAnchor(fx.expected, fx.line);
+            const others: DistractorFile[] = fixtures
+              .filter(o => o.dir !== fx.dir)
+              .map(o => ({ name: o.targetName, content: o.buggy }));
+            for (const d of pickDistractors(others, distractorCount, anchor, fx.targetName)) {
+              writeFileSync(path.join(ws, d.name), d.content);
+            }
+            prompt = buildSearchPrompt(fx.task, anchor);
+          }
+
           const res = await runClaudeP({
             cwd: ws,
             model,
             maxTurns,
-            disallowedTools: disallowedToolsFor(arm),
-            prompt: fx.task,
+            disallowedTools: disallowedToolsFor(arm, searchMode),
+            prompt,
             serverPath: SERVER_PATH,
             needsHashlineServer: armNeedsHashlineServer(arm),
             timeoutMs: sessionTimeoutMs,
@@ -135,6 +155,7 @@ async function main() {
             outputTokens: metrics.outputTokens,
             rejections: metrics.rejections,
             turns: metrics.turns,
+            searchCalls: metrics.searchCalls,
           });
           rmSync(ws, { recursive: true, force: true });
         }
