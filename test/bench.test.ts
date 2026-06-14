@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { mutationsFor } from "../bench/mutate.ts";
 import { aggregate, formatDeterministic, type RunRecord, scoreFixture } from "../bench/score.ts";
-import { disallowedToolsFor, parseTranscript } from "../bench/runner.ts";
+import { armNeedsHashlineServer, disallowedToolsFor, parseTranscript } from "../bench/runner.ts";
 
 describe("mutations (R10)", () => {
   const src = "export function cmp(a, b) {\n  if (a === b) return 0;\n  for (let i = 0; i <= b; i++) {}\n  return a + b;\n}\n";
@@ -80,10 +80,16 @@ describe("arms (R12) and transcript parsing (R14)", () => {
   });
   test("control arm disallows hashline tools by name AND glob (feas-05)", () => {
     const d = disallowedToolsFor("control");
-    expect(d).toContain("mcp__plugin_claude-hashline_hashline__edit");
-    expect(d).toContain("mcp__plugin_claude-hashline_hashline__*");
+    // Benchmark loads the server via --mcp-config, so the namespace is mcp__hashline__*.
+    expect(d).toContain("mcp__hashline__edit");
+    expect(d).toContain("mcp__hashline__*");
   });
-  test("parses output tokens, turns, and rejections from a stream-json transcript", () => {
+  test("hashline/familiarity arms need the MCP server; control does not", () => {
+    expect(armNeedsHashlineServer("hashline")).toBe(true);
+    expect(armNeedsHashlineServer("familiarity")).toBe(true);
+    expect(armNeedsHashlineServer("control")).toBe(false);
+  });
+  test("falls back to summing usage and counting assistant turns when no result line", () => {
     const transcript = [
       JSON.stringify({ type: "assistant", message: { usage: { output_tokens: 120 } } }),
       JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", is_error: true, content: "String to replace not found in file" }] } }),
@@ -93,5 +99,17 @@ describe("arms (R12) and transcript parsing (R14)", () => {
     expect(m.outputTokens).toBe(200);
     expect(m.turns).toBe(2);
     expect(m.rejections).toBeGreaterThanOrEqual(1);
+  });
+  test("prefers the authoritative result envelope and adds permission_denials (no double-count)", () => {
+    const transcript = [
+      JSON.stringify({ type: "assistant", message: { usage: { output_tokens: 50 } } }),
+      JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", is_error: true, content: "does not match the current file" }] } }),
+      JSON.stringify({ type: "assistant", message: { usage: { output_tokens: 60 } } }),
+      JSON.stringify({ type: "result", num_turns: 4, usage: { output_tokens: 302 }, permission_denials: [{ tool_name: "Edit" }, { tool_name: "Write" }] }),
+    ].join("\n");
+    const m = parseTranscript(transcript);
+    expect(m.outputTokens).toBe(302); // result envelope, not 50+60+302
+    expect(m.turns).toBe(4); // result num_turns, not 2 assistant lines
+    expect(m.rejections).toBe(3); // 1 errored tool_result + 2 permission denials
   });
 });

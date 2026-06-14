@@ -66,11 +66,19 @@ Measures hashline vs. the built-in editor across Claude tiers (`bench/`).
 # 1. generate fixtures from a source corpus (e.g. a React checkout)
 bun run bench/generate.ts /path/to/react/packages out/fixtures --per-file 2
 
-# 2. run both arms across models (requires `claude-p` on PATH)
+# 2. run both arms across models (requires the `claude` CLI on PATH)
 bun run bench/run.ts out/fixtures \
   --models claude-haiku-4-5,claude-sonnet-4-6 \
   --arms hashline,control --max-turns 30 --out report.md
 ```
+
+The runner drives the real `claude -p` headless CLI (`--output-format stream-json`),
+loading the hashline MCP server per-run via `--mcp-config --strict-mcp-config` with
+`HASHLINE_ROOT` pinned to each isolated workspace. The hashline arm blocks the
+built-in editors with `--disallowedTools Edit Write NotebookEdit` (verified to be
+enforced even under `--dangerously-skip-permissions`); a blocked attempt surfaces as
+an errored `tool_result` and counts toward the edit-failure rate. Token counts and
+turns come from the authoritative trailing `result` envelope.
 
 The report stratifies pass rate, edit-failure rate, output tokens, and turns by
 difficulty class (`simple` vs `hard-anchor`). Note the **confound**: the hashline
@@ -93,5 +101,8 @@ Phase 1 (plugin) is implemented and tested end-to-end: MCP handshake, read/edit
 adapters, containment, stale-tag and read-before-edit gates, file creation, and
 the block hook. Phase 2 (benchmark) is implemented; its deterministic parts
 (mutation, scoring, aggregation, arm/flag mapping, transcript parsing) are
-tested, and the live model run requires `claude-p` and a corpus. Grep tagging is
-deferred (`read` + `edit` only in v1); the model falls back to built-in `Grep`.
+tested, and the live model run requires the `claude` CLI and a corpus. The full
+pipeline (claude `-p` spawn, per-run MCP load, hashline read/edit, built-in
+blocking, scoring, stratified report) has been validated end-to-end on a pilot
+fixture across both arms. Grep tagging is deferred (`read` + `edit` only in v1);
+the model falls back to built-in `Grep`.

@@ -8,14 +8,17 @@
  *   bun run bench/run.ts <fixtures-dir> --models m1,m2 [--arms hashline,control]
  *                        [--max-turns 30] [--out report.md]
  *
- * Requires `claude-p` on PATH. Runner failures are recorded, not fatal.
+ * Requires the `claude` CLI on PATH. Runner failures are recorded, not fatal.
  */
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { renderReport } from "./report.ts";
 import { aggregate, type RunRecord, scoreFixture } from "./score.ts";
-import { type Arm, disallowedToolsFor, parseTranscript, runClaudeP } from "./runner.ts";
+import { type Arm, armNeedsHashlineServer, disallowedToolsFor, parseTranscript, runClaudeP } from "./runner.ts";
+
+/** Absolute path to the hashline MCP server entry, loaded into hashline arms. */
+const SERVER_PATH = path.resolve(import.meta.dir, "../src/server.ts");
 
 function arg(name: string, fallback?: string): string | undefined {
   const i = Bun.argv.indexOf(name);
@@ -95,6 +98,8 @@ async function main() {
             maxTurns,
             disallowedTools: disallowedToolsFor(arm),
             prompt: fx.task,
+            serverPath: SERVER_PATH,
+            needsHashlineServer: armNeedsHashlineServer(arm),
           });
           if (res.unavailable) unavailable++;
 
@@ -126,7 +131,7 @@ async function main() {
   }
 
   if (unavailable > 0) {
-    console.error(`WARNING: claude-p was unavailable for ${unavailable} run(s); those are recorded as failures. Install claude-p or wire the claude -p / SDK fallback in runner.ts.`);
+    console.error(`WARNING: the claude CLI was unavailable for ${unavailable} run(s); those are recorded as failures. Ensure \`claude\` is on PATH.`);
   }
 
   const report = renderReport(aggregate(records), {
