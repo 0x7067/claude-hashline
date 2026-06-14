@@ -17,6 +17,7 @@ import {
   stripBom,
 } from "@oh-my-pi/hashline";
 import { readdirSync, statSync } from "node:fs";
+import * as path from "node:path";
 import { JailedFilesystem, PathEscapeError } from "./jailed-fs.ts";
 
 export interface HashlineContext {
@@ -90,6 +91,134 @@ export async function hashlineRead(ctx: HashlineContext, args: ReadArgs): Promis
   const remaining = allLines.length - end;
   const tail = remaining > 0 ? `\n... ${remaining} more line(s); re-read with offset=${end + 1}` : "";
   return `${header}\n${body}${tail}`;
+}
+
+/** Lines of context emitted on each side of a search hit (mirrors the package's
+ * MISMATCH_CONTEXT). Hits closer than this collapse into one window. */
+const SEARCH_CONTEXT = 2;
+/** Default cap on total emitted match lines across all files. */
+const DEFAULT_MAX_SEARCH_RESULTS = 50;
+/** Skip files larger than this (bytes) — binaries/minified blobs aren't editable views. */
+const MAX_SEARCH_FILE_BYTES = 1_000_000;
+/** Directory names never descended into during a search walk. */
+const SEARCH_SKIP_DIRS = new Set(["node_modules", ".git"]);
+
+export interface SearchArgs {
+  /** Regex source matched per line. */
+  pattern: string;
+  /** Optional RegExp flags (e.g. "i"). */
+  flags?: string;
+  /** Cap on total match lines returned (default 50). */
+  maxResults?: number;
+}
+
+/** Recursively collect editable files under `dir`, skipping node_modules and
+ * dot-directories (mirrors `bench/generate.ts` walk). Returns absolute paths. */
+function walkFiles(dir: string): string[] {
+  const out: string[] = [];
+  let names: string[];
+  try {
+    names = readdirSync(dir);
+  } catch {
+    return out;
+  }
+  for (const name of names) {
+    if (name.startsWith(".")) continue;
+    const full = path.join(dir, name);
+    let st: ReturnType<typeof statSync>;
+    try {
+      st = statSync(full);
+    } catch {
+      continue;
+    }
+    if (st.isDirectory()) {
+      if (SEARCH_SKIP_DIRS.has(name)) continue;
+      out.push(...walkFiles(full));
+    } else if (st.isFile()) {
+      out.push(full);
+    }
+  }
+  return out;
+}
+
+/** Merge 0-based line indices into inclusive [start, end] windows padded by
+ * SEARCH_CONTEXT, collapsing overlapping/adjacent windows. */
+function mergeWindows(hits: number[], lineCount: number): Array<[number, number]> {
+  const windows: Array<[number, number]> = [];
+  for (const i of hits) {
+    const a = Math.max(0, i - SEARCH_CONTEXT);
+    const b = Math.min(lineCount - 1, i + SEARCH_CONTEXT);
+    const last = windows[windows.length - 1];
+    if (last && a <= last[1] + 1) last[1] = Math.max(last[1], b);
+    else windows.push([a, b]);
+  }
+  return windows;
+}
+
+/**
+ * Search the workspace for `pattern` and return matches grouped per file under
+ * the engine's `[PATH#TAG]` header with windowed `LINE:TEXT` rows (R1, R2). Each
+ * matched file gets a recorded whole-file snapshot (R3) so the model can `edit`
+ * straight off a hit with no prior `read`. Walk and snapshot keys stay inside the
+ * workspace jail (R5). Unmatched files are never recorded (KTD2).
+ */
+export async function hashlineSearch(ctx: HashlineContext, args: SearchArgs): Promise<string> {
+  const re = new RegExp(args.pattern, args.flags); // throws on invalid pattern (server wraps to isError)
+  const cap = args.maxResults && args.maxResults > 0 ? args.maxResults : DEFAULT_MAX_SEARCH_RESULTS;
+
+  const blocks: string[] = [];
+  let total = 0;
+  let truncated = false;
+
+  for (const abs of walkFiles(ctx.root).sort()) {
+    if (truncated) break;
+    let size: number;
+    try {
+      size = statSync(abs).size;
+    } catch {
+      continue;
+    }
+    if (size > MAX_SEARCH_FILE_BYTES) continue;
+
+    const rel = path.relative(ctx.root, abs);
+    let raw: string;
+    try {
+      raw = await ctx.fs.readText(rel);
+    } catch {
+      continue; // unreadable / escaped — skip silently
+    }
+    const normalized = normalizeToLF(stripBom(raw).text);
+    const lines = normalized.split("\n");
+
+    const hits: number[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      re.lastIndex = 0;
+      if (re.test(lines[i])) hits.push(i);
+    }
+    if (hits.length === 0) continue;
+
+    // Match-gated snapshot: only matched files are recorded (KTD2/R3).
+    const key = ctx.fs.canonicalPath(rel);
+    const hash = ctx.snapshots.record(key, normalized);
+
+    const rows: string[] = [];
+    for (const [a, b] of mergeWindows(hits, lines.length)) {
+      const slice = lines.slice(a, b + 1).join("\n");
+      rows.push(formatNumberedLines(slice, a + 1));
+      total += hits.filter(h => h >= a && h <= b).length;
+      if (total >= cap) {
+        // A window is atomic, so the cap is a floor, not an exact count: render
+        // the window in full, then stop. More matches exist beyond this point.
+        truncated = true;
+        break;
+      }
+    }
+    blocks.push(`${formatHashlineHeader(rel, hash)}\n${rows.join("\n")}`);
+  }
+
+  if (blocks.length === 0) return `No matches for /${args.pattern}/${args.flags ?? ""}.`;
+  const tail = truncated ? `\n\n... results truncated at ${cap} matches; narrow your pattern.` : "";
+  return `${blocks.join("\n\n")}${tail}`;
 }
 
 export interface EditResult {
