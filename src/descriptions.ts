@@ -15,8 +15,10 @@ Output is a header line \`[PATH#TAG]\` followed by \`LINE:TEXT\` rows, e.g.:
     3:}
 
 TAG is a 4-hex content hash of the whole file. To edit, copy the header verbatim
-into the \`edit\` tool and reference the bare line numbers. Re-read after any edit
-to get a fresh TAG. Use \`offset\`/\`limit\` for large files.`;
+into the \`edit\` tool and reference the bare line numbers. A successful \`edit\`
+returns the fresh \`[PATH#TAG]\` and a numbered window of the result, so you can
+make the next edit without re-reading; re-read only for lines outside that
+window or after an external change. Use \`offset\`/\`limit\` for large files.`;
 
 export const SEARCH_TOOL_DESCRIPTION = `Search the workspace for a regex pattern and return matches ready to edit.
 
@@ -80,5 +82,9 @@ Create a new file with a TAGLESS header and an \`insert head:\` body:
     insert head:
     +export const x = 1;
 
-You must \`read\` a file before editing it. The built-in Edit/Write tools are
+A successful edit returns the new \`[PATH#TAG]\` and a numbered window around the
+change — anchor your next edit to that tag and those line numbers directly,
+without re-reading the file.
+
+You must \`read\` a file before your first edit. The built-in Edit/Write tools are
 disabled — use this tool for all text edits.`;
