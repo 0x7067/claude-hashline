@@ -13,6 +13,6 @@
     "forceConsistentCasingInFileNames": true
   },
   "include": ["src", "test", "bench"],
-  "comment": "bench/corpus and bench/fixtures hold vendored source and generated single-file fixtures (dangling imports by design) — they are benchmark data, not project source.",
-  "exclude": ["bench/corpus", "bench/fixtures"]
+  "comment": "bench/corpus and bench/fixtures* hold vendored source and generated single-file fixtures (dangling imports by design) — they are benchmark data, not project source.",
+  "exclude": ["bench/corpus", "bench/fixtures", "bench/fixtures-holdout"]
 }

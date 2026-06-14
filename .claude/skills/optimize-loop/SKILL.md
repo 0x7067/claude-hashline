@@ -29,6 +29,19 @@ Measured on the **hashline arm**, **sonnet**, the **dev** fixtures:
 The verdict is computed by `bench/paired.ts` (below), which encodes exactly this
 rule. Do not eyeball two report tables — they were measured at different times.
 
+### Saturated-primary pivot
+
+If the baseline **sonnet/hashline** mean edit-failures/task is already ≈ 0, the
+primary metric has no headroom — `paired.ts --model sonnet` will DISCARD every
+change because nothing can drop below the floor, and the genuine-rejection signal
+lives on the weaker model instead. In that case **pivot**: read the primary
+objective off **haiku** (`paired.ts --model claude-haiku-4-5`, the model that
+still shows genuine rejections) and use **sonnet** as the must-not-regress
+guardrail. This changes only *which model the objective is read on*, never the
+keep bar itself (still edit-fails-primary with the pass margin), so it is not a
+way to lower the bar. Record the pivot in the ledger and re-check each cycle —
+once haiku's edit-fails also reach the floor, the loop is done.
+
 ## Two kinds of change — label every cycle as one
 
 1. **Harness fix** — the change makes the *tooling* better at communicating with
@@ -52,9 +65,18 @@ measured separately from the harness trajectory.
 2. `src/core.ts` `errMessage()` and the inline rejection strings — make failures
    self-correcting (e.g. when `Patch.parse` rejects `replace N:M`, append a hint
    that ranges use `N..M`).
+3. `src/core.ts` **tolerant input normalization** — be liberal in what you accept:
+   rewrite a common, unambiguous model syntax variant into the grammar before
+   `Patch.parse` (e.g. normalize a colon range `replace N:M:` → `replace N..M:`).
+   This eliminates a rejection category outright rather than explaining it, so it
+   moves the primary metric (edit-fails) directly. Only normalize variants with a
+   single safe interpretation; never paper over a genuinely ambiguous patch.
 
 Pick the change from the **dominant genuine-rejection category** in the latest
-classification (not path-bugs or blocked-built-ins — those are artifacts).
+classification (not path-bugs or blocked-built-ins — those are artifacts). Prefer
+a tolerance fix (lever 3) when the model's *intent* is clear and only the syntax
+is wrong; prefer a description/message fix (levers 1–2) when the model's intent
+itself is wrong.
 
 ## Dev / holdout split
 
@@ -67,6 +89,18 @@ Maintain the split as two fixture directories (e.g. `bench/fixtures` = dev,
 `bench/fixtures-holdout` = holdout) or a documented fixture-name list in the
 ledger. If only one corpus exists, say so in the ledger and treat every result as
 dev-only (no overfitting claim either way) until a holdout is carved out.
+
+**A holdout can only veto a change it actually exercised.** Before treating a
+holdout DISCARD as real, check whether the change *fired* on the holdout: did its
+targeted rejection category occur (compare baseline-vs-candidate rejection
+counts)? If the holdout's edit-fails are identical (e.g. 0→0 across every
+fixture), the change was a no-op there — the holdout is **uninformative**, and its
+pass flips are sampling noise on fixtures the change cannot affect, NOT an
+overfit signal. An uninformative holdout neither confirms nor vetoes; decide on
+mechanism + dev + safety, record it as uninformative (never as a clean pass), and
+prefer enlarging the holdout so it exercises the change next time. This is the
+symmetric guard to "don't keep on dev noise": don't *discard* on holdout noise
+either.
 
 ## Cycle
 

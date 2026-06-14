@@ -14,3 +14,6 @@ report*.records.json
 report.err
 # Ad-hoc benchmark workdir (generated fixtures + reports; regenerate via bench/)
 out/
+# Optimize-loop generated reports/records (LEDGER.md is the curated record, kept)
+docs/benchmark/iters/
+docs/benchmark/clean-baseline*

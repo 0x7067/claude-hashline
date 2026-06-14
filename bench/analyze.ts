@@ -32,6 +32,7 @@ interface Cell {
   n: number;
   pass: number; // 0..1
   editFail: number;
+  search: number;
   tokens: number;
   turns: number;
   masked: number;
@@ -54,12 +55,13 @@ function parseReport(md: string): ParsedReport {
   for (const line of md.split("\n")) {
     if (!line.startsWith("| ")) continue;
     const c = line.split("|").map(s => s.trim()).filter((_, i, a) => i > 0 && i < a.length - 1);
-    if (c.length !== 9) continue;
+    // Report columns: model|arm|difficulty|n|pass|edit-fail/task|search/task|out-tokens|turns|masked
+    if (c.length !== 10) continue;
     if (c[0] === "model" || c[0].startsWith("--")) continue;
     cells.push({
       model: c[0], arm: c[1], difficulty: c[2], n: Number(c[3]),
       pass: Number(c[4].replace("%", "")) / 100, editFail: Number(c[5]),
-      tokens: Number(c[6]), turns: Number(c[7]), masked: Number(c[8]),
+      search: Number(c[6]), tokens: Number(c[7]), turns: Number(c[8]), masked: Number(c[9]),
     });
   }
   return { cells, formatter: meta("Formatter (pinned):"), corpusPin: meta("Corpus pin:"), models: meta("Models:") };
