@@ -41,13 +41,13 @@ server.registerTool(
     description: SEARCH_TOOL_DESCRIPTION,
     inputSchema: {
       pattern: z.string().describe("Regex source matched against each line."),
-      flags: z.string().optional().describe('Optional RegExp flags, e.g. "i" for case-insensitive.'),
+      i: z.boolean().optional().describe("Case-insensitive search."),
       maxResults: z.number().int().positive().optional().describe("Cap on total match lines returned."),
     },
   },
-  async ({ pattern, flags, maxResults }) => {
+  async ({ pattern, i, maxResults }) => {
     try {
-      const text = await hashlineSearch(ctx, { pattern, flags, maxResults });
+      const text = await hashlineSearch(ctx, { pattern, i, maxResults });
       return { content: [{ type: "text", text }] };
     } catch (err) {
       return { content: [{ type: "text", text: err instanceof Error ? err.message : String(err) }], isError: true };

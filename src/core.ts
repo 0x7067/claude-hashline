@@ -93,23 +93,37 @@ export async function hashlineRead(ctx: HashlineContext, args: ReadArgs): Promis
   return `${header}\n${body}${tail}`;
 }
 
-/** Lines of context emitted on each side of a search hit (mirrors the package's
- * MISMATCH_CONTEXT). Hits closer than this collapse into one window. */
-const SEARCH_CONTEXT = 2;
+// Context window defaults mirror oh-my-pi's `search` tool (search.contextBefore
+// = 1, search.contextAfter = 3): a hit shows one line above and three below.
+const SEARCH_CONTEXT_BEFORE = 1;
+const SEARCH_CONTEXT_AFTER = 3;
 /** Default cap on total emitted match lines across all files. */
 const DEFAULT_MAX_SEARCH_RESULTS = 50;
 /** Skip files larger than this (bytes) — binaries/minified blobs aren't editable views. */
 const MAX_SEARCH_FILE_BYTES = 1_000_000;
+/** Per-line column cap; longer lines are truncated with `…` (oh-my-pi maxColumns). */
+const MAX_SEARCH_COLUMNS = 512;
 /** Directory names never descended into during a search walk. */
 const SEARCH_SKIP_DIRS = new Set(["node_modules", ".git"]);
 
 export interface SearchArgs {
   /** Regex source matched per line. */
   pattern: string;
-  /** Optional RegExp flags (e.g. "i"). */
-  flags?: string;
+  /** Case-insensitive search (oh-my-pi `i`). */
+  i?: boolean;
   /** Cap on total match lines returned (default 50). */
   maxResults?: number;
+}
+
+/**
+ * Format one search row, mirroring oh-my-pi's `formatMatchLine` in hashline
+ * mode: a match line is prefixed `*`, a context line a single space, so line
+ * numbers stay column-aligned. Numbers are never padded. Over-long lines are
+ * truncated to MAX_SEARCH_COLUMNS with a trailing `…`.
+ */
+function formatMatchLine(lineNumber: number, line: string, isMatch: boolean): string {
+  const text = line.length > MAX_SEARCH_COLUMNS ? `${line.slice(0, MAX_SEARCH_COLUMNS)}…` : line;
+  return `${isMatch ? "*" : " "}${lineNumber}:${text}`;
 }
 
 /** Recursively collect editable files under `dir`, skipping node_modules and
@@ -141,13 +155,13 @@ function walkFiles(dir: string): string[] {
   return out;
 }
 
-/** Merge 0-based line indices into inclusive [start, end] windows padded by
- * SEARCH_CONTEXT, collapsing overlapping/adjacent windows. */
+/** Merge 0-based hit indices into inclusive [start, end] windows padded by
+ * SEARCH_CONTEXT_BEFORE/AFTER, collapsing overlapping/adjacent windows. */
 function mergeWindows(hits: number[], lineCount: number): Array<[number, number]> {
   const windows: Array<[number, number]> = [];
   for (const i of hits) {
-    const a = Math.max(0, i - SEARCH_CONTEXT);
-    const b = Math.min(lineCount - 1, i + SEARCH_CONTEXT);
+    const a = Math.max(0, i - SEARCH_CONTEXT_BEFORE);
+    const b = Math.min(lineCount - 1, i + SEARCH_CONTEXT_AFTER);
     const last = windows[windows.length - 1];
     if (last && a <= last[1] + 1) last[1] = Math.max(last[1], b);
     else windows.push([a, b]);
@@ -163,7 +177,7 @@ function mergeWindows(hits: number[], lineCount: number): Array<[number, number]
  * workspace jail (R5). Unmatched files are never recorded (KTD2).
  */
 export async function hashlineSearch(ctx: HashlineContext, args: SearchArgs): Promise<string> {
-  const re = new RegExp(args.pattern, args.flags); // throws on invalid pattern (server wraps to isError)
+  const re = new RegExp(args.pattern, args.i ? "i" : ""); // throws on invalid pattern (server wraps to isError)
   const cap = args.maxResults && args.maxResults > 0 ? args.maxResults : DEFAULT_MAX_SEARCH_RESULTS;
 
   const blocks: string[] = [];
@@ -190,12 +204,13 @@ export async function hashlineSearch(ctx: HashlineContext, args: SearchArgs): Pr
     const normalized = normalizeToLF(stripBom(raw).text);
     const lines = normalized.split("\n");
 
-    const hits: number[] = [];
+    const hitSet = new Set<number>();
     for (let i = 0; i < lines.length; i++) {
       re.lastIndex = 0;
-      if (re.test(lines[i])) hits.push(i);
+      if (re.test(lines[i])) hitSet.add(i);
     }
-    if (hits.length === 0) continue;
+    if (hitSet.size === 0) continue;
+    const hits = [...hitSet];
 
     // Match-gated snapshot: only matched files are recorded (KTD2/R3).
     const key = ctx.fs.canonicalPath(rel);
@@ -203,8 +218,7 @@ export async function hashlineSearch(ctx: HashlineContext, args: SearchArgs): Pr
 
     const rows: string[] = [];
     for (const [a, b] of mergeWindows(hits, lines.length)) {
-      const slice = lines.slice(a, b + 1).join("\n");
-      rows.push(formatNumberedLines(slice, a + 1));
+      for (let i = a; i <= b; i++) rows.push(formatMatchLine(i + 1, lines[i], hitSet.has(i)));
       total += hits.filter(h => h >= a && h <= b).length;
       if (total >= cap) {
         // A window is atomic, so the cap is a floor, not an exact count: render
@@ -216,7 +230,7 @@ export async function hashlineSearch(ctx: HashlineContext, args: SearchArgs): Pr
     blocks.push(`${formatHashlineHeader(rel, hash)}\n${rows.join("\n")}`);
   }
 
-  if (blocks.length === 0) return `No matches for /${args.pattern}/${args.flags ?? ""}.`;
+  if (blocks.length === 0) return "No matches found";
   const tail = truncated ? `\n\n... results truncated at ${cap} matches; narrow your pattern.` : "";
   return `${blocks.join("\n\n")}${tail}`;
 }

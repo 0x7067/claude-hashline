@@ -27,15 +27,17 @@ file is snapshotted, so you can \`edit\` straight off a hit WITHOUT a separate
 \`read\` first.
 
     [src/app.ts#9A46]
-    11:  const ready = true;
-    12:  return ready;
+     10:function init() {
+    *11:  const ready = true;
+     12:  return ready;
 
-Output shows each hit with a few lines of surrounding context. To change a line
-you can see, copy that file's \`[PATH#TAG]\` header into \`edit\` and reference the
-line number. If you need lines OUTSIDE the shown context, \`read\` that file for
+Match lines are prefixed \`*\`; surrounding context lines a single space (one line
+before, three after each hit). To change a line you can see, copy that file's
+\`[PATH#TAG]\` header into \`edit\` and reference the line number. If you need lines
+OUTSIDE the shown context, \`read\` that file for
 the full tagged view.
 
-Args: \`pattern\` (regex source, required), \`flags\` (e.g. "i"), \`maxResults\`
+Args: \`pattern\` (regex source, required), \`i\` (case-insensitive), \`maxResults\`
 (cap on returned matches; results truncate with a hint to narrow the pattern).
 Skips node_modules, dot-directories, and very large files.`;
 
