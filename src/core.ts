@@ -214,6 +214,19 @@ export interface EditResult {
 const TAGLESS_CREATE_HEADER = /^\[([^\]#]+)\]\s*$/;
 
 /**
+ * Be liberal in what we accept (optimize-loop cycle 1). Weaker models copy the
+ * `N:` label from `read` rows into hunk headers and write a COLON range —
+ * `replace 23:23:` / `delete 12:14` — instead of the grammar's `N..M`. This was
+ * 100% of the haiku arm's genuine edit-rejections. Rewrite a colon BETWEEN TWO
+ * NUMBERS in a `replace`/`delete` header to `..` before parsing. A single-line
+ * `replace 23:` (one number, nothing after the colon) is left untouched — it is
+ * not a range.
+ */
+export function normalizeColonRanges(input: string): string {
+  return input.replace(/^(\s*(?:replace|delete)\s+\d+):(\d+)/gm, "$1..$2");
+}
+
+/**
  * Apply a hashline patch (R3). Runs three adapter-side gates the package does
  * not — path containment (KTD9), read-before-edit (R6/feas-03), and new-file
  * creation (R4/KTD10) — then delegates to the package Patcher for existing
@@ -233,7 +246,7 @@ export async function hashlineEdit(ctx: HashlineContext, input: string): Promise
 
   let patch: Patch;
   try {
-    patch = Patch.parse(input, { cwd: ctx.root });
+    patch = Patch.parse(normalizeColonRanges(input), { cwd: ctx.root });
   } catch (err) {
     return { text: errMessage(err), isError: true };
   }

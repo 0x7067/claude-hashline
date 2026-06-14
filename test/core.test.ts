@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { createContext, hashlineEdit, hashlineRead, hashlineSearch, type HashlineContext } from "../src/core.ts";
+import { createContext, hashlineEdit, hashlineRead, hashlineSearch, type HashlineContext, normalizeColonRanges } from "../src/core.ts";
 import { JailedFilesystem } from "../src/jailed-fs.ts";
 
 let root: string;
@@ -55,6 +55,29 @@ describe("hashlineRead (R1)", () => {
 
   test("PathEscapeError on read outside the root (KTD9)", async () => {
     await expect(hashlineRead(ctx, { path: "../escape.ts" })).rejects.toThrow(/outside the workspace/);
+  });
+});
+
+describe("colon-range tolerance (optimize-loop cycle 1)", () => {
+  test("normalizeColonRanges rewrites N:M ranges, leaves single-line N: alone", () => {
+    expect(normalizeColonRanges("replace 23:23:")).toBe("replace 23..23:");
+    expect(normalizeColonRanges("replace 12:14:")).toBe("replace 12..14:");
+    expect(normalizeColonRanges("delete 5:8")).toBe("delete 5..8");
+    // Single-line replace is valid syntax and must be preserved.
+    expect(normalizeColonRanges("replace 23:")).toBe("replace 23:");
+    // Already-correct ranges and body rows are untouched.
+    expect(normalizeColonRanges("replace 2..2:\n+hi")).toBe("replace 2..2:\n+hi");
+    // A `+`-body line that contains a colon range is not a header — leave it.
+    expect(normalizeColonRanges("+const a = b ? 1:2;")).toBe("+const a = b ? 1:2;");
+  });
+
+  test("hashlineEdit applies a colon-range header that the grammar would reject", async () => {
+    writeFileSync(path.join(root, "a.ts"), "one\ntwo\nthree\n");
+    const tag = tagFrom(await hashlineRead(ctx, { path: "a.ts" }));
+    // Model wrote a colon range copied from the read-row label; harness tolerates it.
+    const res = await hashlineEdit(ctx, `[a.ts#${tag}]\nreplace 2:2:\n+TWO`);
+    expect(res.isError).toBe(false);
+    expect(readFileSync(path.join(root, "a.ts"), "utf8")).toBe("one\nTWO\nthree\n");
   });
 });
 
