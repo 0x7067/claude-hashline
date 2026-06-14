@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 
@@ -18,38 +18,76 @@ async function runHook(opts: { env?: Record<string, string>; cwd?: string }): Pr
   return out;
 }
 
-describe("block hook (R7/R9)", () => {
-  test("denies by default with a redirect naming the hashline tool", async () => {
-    const out = await runHook({ env: { HOME: "/nonexistent-home" } });
-    const json = JSON.parse(out);
-    expect(json.hookSpecificOutput.permissionDecision).toBe("deny");
-    expect(json.hookSpecificOutput.permissionDecisionReason).toMatch(/hashline edit tool/);
+describe("block hook — opt-in enforcement (R7/R9, global-safe)", () => {
+  test("allows by default when the project has NOT opted in (fail-open)", async () => {
+    const work = mkdtempSync(path.join(tmpdir(), "hashline-cwd-"));
+    try {
+      const out = await runHook({ cwd: work, env: { HOME: "/nonexistent-home" } });
+      expect(out.trim()).toBe(""); // no marker, no env -> allow
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
   });
 
-  test("HASHLINE_DISABLED env var allows the call through (R9)", async () => {
-    const out = await runHook({ env: { HOME: "/nonexistent-home", HASHLINE_DISABLED: "1" } });
+  test("denies when the project opted in via a .hashline-enforce marker", async () => {
+    const work = mkdtempSync(path.join(tmpdir(), "hashline-cwd-"));
+    try {
+      writeFileSync(path.join(work, ".hashline-enforce"), "");
+      const out = await runHook({ cwd: work, env: { HOME: "/nonexistent-home" } });
+      const json = JSON.parse(out);
+      expect(json.hookSpecificOutput.permissionDecision).toBe("deny");
+      expect(json.hookSpecificOutput.permissionDecisionReason).toMatch(/hashline edit tool/);
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  });
+
+  test("a .hashline-enforce marker in an ancestor directory opts in", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "hashline-root-"));
+    try {
+      writeFileSync(path.join(root, ".hashline-enforce"), "");
+      const sub = path.join(root, "pkg", "src");
+      mkdirSync(sub, { recursive: true });
+      const out = await runHook({ cwd: sub, env: { HOME: "/nonexistent-home" } });
+      expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBe("deny");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("HASHLINE_ENFORCE=1 opts in without a marker", async () => {
+    const work = mkdtempSync(path.join(tmpdir(), "hashline-cwd-"));
+    try {
+      const out = await runHook({ cwd: work, env: { HOME: "/nonexistent-home", HASHLINE_ENFORCE: "1" } });
+      expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBe("deny");
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  });
+
+  test("HASHLINE_DISABLED beats enforcement (R9)", async () => {
+    const out = await runHook({ env: { HOME: "/nonexistent-home", HASHLINE_ENFORCE: "1", HASHLINE_DISABLED: "1" } });
     expect(out.trim()).toBe("");
   });
 
-  test("a trusted-dir (HOME) sentinel allows the call through", async () => {
+  test("a trusted-dir (HOME) sentinel beats enforcement", async () => {
     const home = mkdtempSync(path.join(tmpdir(), "hashline-home-"));
     try {
       writeFileSync(path.join(home, ".hashline-off"), "");
-      const out = await runHook({ env: { HOME: home } });
+      const out = await runHook({ env: { HOME: home, HASHLINE_ENFORCE: "1" } });
       expect(out.trim()).toBe("");
     } finally {
       rmSync(home, { recursive: true, force: true });
     }
   });
 
-  test("a cwd .hashline-off does NOT bypass the block (SEC-003)", async () => {
+  test("a cwd .hashline-off does NOT bypass under enforcement (SEC-003)", async () => {
     const work = mkdtempSync(path.join(tmpdir(), "hashline-cwd-"));
     const home = mkdtempSync(path.join(tmpdir(), "hashline-home-"));
     try {
-      writeFileSync(path.join(work, ".hashline-off"), "");
-      const out = await runHook({ cwd: work, env: { HOME: home } });
-      const json = JSON.parse(out);
-      expect(json.hookSpecificOutput.permissionDecision).toBe("deny");
+      writeFileSync(path.join(work, ".hashline-off"), ""); // cwd disable is NOT trusted
+      const out = await runHook({ cwd: work, env: { HOME: home, HASHLINE_ENFORCE: "1" } });
+      expect(JSON.parse(out).hookSpecificOutput.permissionDecision).toBe("deny");
     } finally {
       rmSync(work, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });

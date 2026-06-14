@@ -38,7 +38,8 @@ and a hook that blocks the built-in editors so the model uses hashline.
     first), and **file creation** (a tagless `[path]` header creates a file) —
     then applies the patch via the engine, which rejects/recovers stale tags.
 - **PreToolUse hook** (`hooks/`) denies built-in `Edit`/`Write`/`NotebookEdit`
-  and redirects to the hashline tool.
+  and redirects to the hashline tool — but only in projects that opt into
+  enforcement (see Enforcement); off by default, so a global install is safe.
 
 ## Install
 
@@ -50,19 +51,34 @@ bun install
 
 Add it as a local plugin in Claude Code. The MCP server is declared in
 `.claude-plugin/plugin.json` (`mcpServers.hashline`) and the block hook in
-`hooks/hooks.json`.
+`hooks/hooks.json`. Safe to enable **globally** — see Enforcement.
+
+## Enforcement (opt-in)
+
+The block hook is **off by default**, so a globally enabled plugin never blocks
+editing in a repo that didn't ask for it (which would otherwise break any tool
+that uses the built-in editors, including other agents and skills). Enforcement
+engages only when a project opts in:
+
+- a `.hashline-enforce` marker file at the repo root (or any ancestor of the
+  working directory) — committable, so a team shares the setting, or
+- `HASHLINE_ENFORCE=1` in the environment (session- or machine-wide).
+
+Where enforcement is on, built-in `Edit`/`Write`/`NotebookEdit` are denied and
+redirected to the hashline tool.
 
 ## Escape hatch
 
-The hook blocks **all** built-in editing wherever the plugin is enabled. If the
-hashline tool ever misbehaves, disable the block out-of-band (the in-session
-agent can't, since `Write` is blocked):
+To turn enforcement off in an enforced project (the in-session agent can't, since
+`Write` is blocked):
 
+- remove the `.hashline-enforce` marker, or
 - set `HASHLINE_DISABLED=1` in the environment (read fresh on every call), or
 - create `~/.hashline-off`.
 
 A `.hashline-off` in the working directory is **ignored on purpose** — a cwd
 sentinel would let a cloned repo or a prompt-injection silently unblock editing.
+(A cwd `.hashline-enforce` is fine: it can only add restriction, never bypass.)
 
 ## Benchmark
 
@@ -97,7 +113,7 @@ before drawing conclusions.
 ## Develop
 
 ```bash
-bun test          # 25 tests (adapters, hook, benchmark core)
+bun test          # adapters, hook, benchmark core, diff-preview chaining
 bun run typecheck
 ```
 
