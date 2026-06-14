@@ -1,0 +1,270 @@
+{
+  "corpusPin": "github:0x7067/clean-room@90c8835",
+  "formatterId": "prettier@3.8.4 (corpus .prettierrc)",
+  "records": [
+    {
+      "fixture": "0000-operator-eq-simple",
+      "model": "claude-sonnet-4-6",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 219,
+      "rejections": 0,
+      "turns": 3
+    },
+    {
+      "fixture": "0000-operator-eq-simple",
+      "model": "claude-haiku-4-5",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 493,
+      "rejections": 0,
+      "turns": 3
+    },
+    {
+      "fixture": "0004-operator-rel-simple",
+      "model": "claude-sonnet-4-6",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 254,
+      "rejections": 0,
+      "turns": 3
+    },
+    {
+      "fixture": "0004-operator-rel-simple",
+      "model": "claude-haiku-4-5",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 863,
+      "rejections": 0,
+      "turns": 4
+    },
+    {
+      "fixture": "0006-operator-add-simple",
+      "model": "claude-sonnet-4-6",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 2177,
+      "rejections": 0,
+      "turns": 8
+    },
+    {
+      "fixture": "0006-operator-add-simple",
+      "model": "claude-haiku-4-5",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": false,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 567,
+      "rejections": 0,
+      "turns": 2
+    },
+    {
+      "fixture": "0007-operator-add-simple",
+      "model": "claude-sonnet-4-6",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 3669,
+      "rejections": 0,
+      "turns": 6
+    },
+    {
+      "fixture": "0007-operator-add-simple",
+      "model": "claude-haiku-4-5",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": false,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 959,
+      "rejections": 0,
+      "turns": 3
+    },
+    {
+      "fixture": "0001-operator-add-simple",
+      "model": "claude-sonnet-4-6",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 302,
+      "rejections": 0,
+      "turns": 3
+    },
+    {
+      "fixture": "0001-operator-add-simple",
+      "model": "claude-haiku-4-5",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 378,
+      "rejections": 0,
+      "turns": 3
+    },
+    {
+      "fixture": "0003-operator-eq-simple",
+      "model": "claude-sonnet-4-6",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 254,
+      "rejections": 0,
+      "turns": 3
+    },
+    {
+      "fixture": "0003-operator-eq-simple",
+      "model": "claude-haiku-4-5",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 412,
+      "rejections": 0,
+      "turns": 3
+    },
+    {
+      "fixture": "0002-operator-add-simple",
+      "model": "claude-sonnet-4-6",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 621,
+      "rejections": 0,
+      "turns": 4
+    },
+    {
+      "fixture": "0002-operator-add-simple",
+      "model": "claude-haiku-4-5",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 418,
+      "rejections": 0,
+      "turns": 3
+    },
+    {
+      "fixture": "0011-removed-guard-simple",
+      "model": "claude-sonnet-4-6",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 608,
+      "rejections": 0,
+      "turns": 3
+    },
+    {
+      "fixture": "0011-removed-guard-simple",
+      "model": "claude-haiku-4-5",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 438,
+      "rejections": 0,
+      "turns": 4
+    },
+    {
+      "fixture": "0005-boolean-flip-hard-anchor",
+      "model": "claude-sonnet-4-6",
+      "arm": "hashline",
+      "difficulty": "hard-anchor",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 269,
+      "rejections": 0,
+      "turns": 3
+    },
+    {
+      "fixture": "0005-boolean-flip-hard-anchor",
+      "model": "claude-haiku-4-5",
+      "arm": "hashline",
+      "difficulty": "hard-anchor",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 460,
+      "rejections": 1,
+      "turns": 4
+    },
+    {
+      "fixture": "0010-operator-rel-simple",
+      "model": "claude-sonnet-4-6",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 204,
+      "rejections": 0,
+      "turns": 3
+    },
+    {
+      "fixture": "0010-operator-rel-simple",
+      "model": "claude-haiku-4-5",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 574,
+      "rejections": 0,
+      "turns": 3
+    },
+    {
+      "fixture": "0008-operator-add-simple",
+      "model": "claude-sonnet-4-6",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 231,
+      "rejections": 0,
+      "turns": 3
+    },
+    {
+      "fixture": "0008-operator-add-simple",
+      "model": "claude-haiku-4-5",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": true,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 1062,
+      "rejections": 0,
+      "turns": 3
+    },
+    {
+      "fixture": "0009-removed-guard-simple",
+      "model": "claude-sonnet-4-6",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": false,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 581,
+      "rejections": 0,
+      "turns": 3
+    },
+    {
+      "fixture": "0009-removed-guard-simple",
+      "model": "claude-haiku-4-5",
+      "arm": "hashline",
+      "difficulty": "simple",
+      "pass": false,
+      "passedOnlyAfterFormat": false,
+      "outputTokens": 670,
+      "rejections": 0,
+      "turns": 3
+    }
+  ]
+}
