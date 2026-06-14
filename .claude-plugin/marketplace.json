@@ -1,0 +1,17 @@
+{
+  "name": "hashline-dev",
+  "owner": {
+    "name": "Pedro Guimaraes",
+    "email": "pedroguimaraes@ravn.co"
+  },
+  "metadata": {
+    "description": "Local development marketplace for the claude-hashline plugin (dogfooding)."
+  },
+  "plugins": [
+    {
+      "name": "claude-hashline",
+      "source": ".",
+      "description": "Line-anchored hashline editing + tagged search via an MCP server; blocks the built-in Edit/Write/NotebookEdit tools so the model edits through hashline."
+    }
+  ]
+}
