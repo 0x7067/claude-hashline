@@ -126,6 +126,7 @@ async function main() {
           const score = await scoreFixture({ postEdit, expected: fx.expected, targetName: fx.targetName, prettierOptions });
           const metrics = parseTranscript(res.transcript);
           records.push({
+            fixture: path.basename(fx.dir),
             model,
             arm,
             difficulty: fx.difficulty,
@@ -155,7 +156,13 @@ async function main() {
   });
   if (outPath) {
     writeFileSync(outPath, report);
+    // Per-fixture records alongside the report (sibling `.records.json`): paired
+    // per-fixture comparison in the optimize loop needs each fixture's outcome,
+    // not just the aggregate cells the markdown table carries.
+    const recordsPath = outPath.replace(/\.md$/, "") + ".records.json";
+    writeFileSync(recordsPath, JSON.stringify({ corpusPin: manifest.corpusPin ?? "unknown", formatterId, records }, null, 2));
     console.log(`Report written to ${outPath}`);
+    console.log(`Per-fixture records written to ${recordsPath}`);
   } else {
     console.log(report);
   }

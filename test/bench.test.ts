@@ -68,7 +68,7 @@ describe("scoring (R14) with pinned prettier", () => {
 
 describe("aggregation stratifies by difficulty (R15)", () => {
   const rec = (over: Partial<RunRecord>): RunRecord => ({
-    model: "m", arm: "hashline", difficulty: "simple", pass: true,
+    fixture: "fx", model: "m", arm: "hashline", difficulty: "simple", pass: true,
     passedOnlyAfterFormat: false, outputTokens: 100, rejections: 0, turns: 1, ...over,
   });
   test("emits an 'all' cell plus per-difficulty cells", () => {
