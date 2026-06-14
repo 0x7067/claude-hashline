@@ -20,6 +20,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import * as path from "node:path";
 import ignore from "ignore";
 import { JailedFilesystem, PathEscapeError } from "./jailed-fs.ts";
+import { buildRipgrepArgs, runRipgrep } from "./ripgrep.ts";
 
 export interface HashlineContext {
   fs: JailedFilesystem;
@@ -112,8 +113,12 @@ export interface SearchArgs {
   pattern: string;
   /** Case-insensitive search (oh-my-pi `i`). */
   i?: boolean;
-  /** Respect the repo's `.gitignore` (oh-my-pi `gitignore`, default true). */
+  /** Respect ignore files (`.gitignore`/`.ignore`), default true; mirrors oh-my-pi `gitignore`. */
   gitignore?: boolean;
+  /** Scope the search to these workspace-relative subpaths; defaults to the whole tree. */
+  paths?: string[];
+  /** Multiline matching (ripgrep `-U`). */
+  multiline?: boolean;
   /** Cap on total match lines returned (default 50). */
   maxResults?: number;
 }
@@ -182,69 +187,81 @@ function mergeWindows(hits: number[], lineCount: number): Array<[number, number]
   return windows;
 }
 
+/** Strip ripgrep's leading `./` so the path is workspace-relative (rg prefixes
+ * `.`-rooted searches; explicit path args come back unprefixed). */
+function toWorkspaceRel(p: string | undefined): string | null {
+  if (!p) return null;
+  return p.startsWith("./") ? p.slice(2) : p;
+}
+
 /**
- * Search the workspace for `pattern` and return matches grouped per file under
- * the engine's `[PATH#TAG]` header with windowed `LINE:TEXT` rows (R1, R2). Each
- * matched file gets a recorded whole-file snapshot (R3) so the model can `edit`
- * straight off a hit with no prior `read`. Walk and snapshot keys stay inside the
- * workspace jail (R5). Unmatched files are never recorded (KTD2).
+ * Search the workspace for `pattern` via ripgrep and return matches grouped per
+ * file under the engine's `[PATH#TAG]` header with windowed `LINE:TEXT` rows
+ * (R1, R2). Each matched file is full-read once to record a whole-file snapshot
+ * (R3) so the model can `edit` straight off a hit with no prior `read`; only
+ * matched files are recorded (KTD2). `paths` are jail-validated before the spawn
+ * and ripgrep does not follow symlinks, so results stay inside the workspace
+ * (R8). Pattern syntax is Rust/RE2 (no backreferences/lookbehind).
  */
 export async function hashlineSearch(ctx: HashlineContext, args: SearchArgs): Promise<string> {
-  const re = new RegExp(args.pattern, args.i ? "i" : ""); // throws on invalid pattern (server wraps to isError)
+  // R8: reject any `paths` entry that escapes the jail before spawning ripgrep.
+  if (args.paths) for (const p of args.paths) ctx.fs.canonicalPath(p); // throws PathEscapeError
+
   const cap = args.maxResults && args.maxResults > 0 ? args.maxResults : DEFAULT_MAX_SEARCH_RESULTS;
-  const ig = args.gitignore === false ? null : loadGitignore(ctx.root);
+  const argv = buildRipgrepArgs({
+    pattern: args.pattern,
+    i: args.i,
+    gitignore: args.gitignore,
+    multiline: args.multiline,
+    paths: args.paths,
+  });
 
   const blocks: string[] = [];
   let total = 0;
   let truncated = false;
 
-  for (const abs of walkFiles(ctx.root).sort()) {
-    if (truncated) break;
-    // gitignore filter: the `ignore` package requires POSIX-separated relatives.
-    if (ig && ig.ignores(path.relative(ctx.root, abs).split(path.sep).join("/"))) continue;
-    let size: number;
-    try {
-      size = statSync(abs).size;
-    } catch {
-      continue;
+  // ripgrep streams begin → match/context… → end per file, in path order.
+  let rel: string | null = null;
+  let hash: string | null = null;
+  let rows: string[] = [];
+  const flush = () => {
+    if (rel !== null && hash !== null && rows.length > 0) {
+      blocks.push(`${formatHashlineHeader(rel, hash)}\n${rows.join("\n")}`);
     }
-    if (size > MAX_SEARCH_FILE_BYTES) continue;
+    rel = null;
+    hash = null;
+    rows = [];
+  };
 
-    const rel = path.relative(ctx.root, abs);
-    let raw: string;
-    try {
-      raw = await ctx.fs.readText(rel);
-    } catch {
-      continue; // unreadable / escaped — skip silently
-    }
-    const normalized = normalizeToLF(stripBom(raw).text);
-    const lines = normalized.split("\n");
-
-    const hitSet = new Set<number>();
-    for (let i = 0; i < lines.length; i++) {
-      re.lastIndex = 0;
-      if (re.test(lines[i])) hitSet.add(i);
-    }
-    if (hitSet.size === 0) continue;
-    const hits = [...hitSet];
-
-    // Match-gated snapshot: only matched files are recorded (KTD2/R3).
-    const key = ctx.fs.canonicalPath(rel);
-    const hash = ctx.snapshots.record(key, normalized);
-
-    const rows: string[] = [];
-    for (const [a, b] of mergeWindows(hits, lines.length)) {
-      for (let i = a; i <= b; i++) rows.push(formatMatchLine(i + 1, lines[i], hitSet.has(i)));
-      total += hits.filter(h => h >= a && h <= b).length;
-      if (total >= cap) {
-        // A window is atomic, so the cap is a floor, not an exact count: render
-        // the window in full, then stop. More matches exist beyond this point.
+  for await (const msg of runRipgrep({ argv, cwd: ctx.root })) {
+    if (msg.type === "begin") {
+      flush();
+      const r = toWorkspaceRel(msg.data.path.text);
+      if (!r) continue;
+      let raw: string;
+      try {
+        raw = await ctx.fs.readText(r); // full-read the matched file
+      } catch {
+        continue; // unreadable / escaped — skip this file
+      }
+      const normalized = normalizeToLF(stripBom(raw).text);
+      // Match-gated snapshot: only matched files are recorded (KTD2/R3).
+      hash = ctx.snapshots.record(ctx.fs.canonicalPath(r), normalized);
+      rel = r;
+    } else if (msg.type === "match" || msg.type === "context") {
+      if (rel === null) continue; // file was skipped at begin
+      const text = (msg.data.lines.text ?? "").replace(/\r?\n$/, "");
+      rows.push(formatMatchLine(msg.data.line_number, text, msg.type === "match"));
+      if (msg.type === "match" && ++total >= cap) {
         truncated = true;
+        flush();
         break;
       }
+    } else if (msg.type === "end") {
+      flush();
     }
-    blocks.push(`${formatHashlineHeader(rel, hash)}\n${rows.join("\n")}`);
   }
+  flush(); // defensive: stream ended without a trailing `end`
 
   if (blocks.length === 0) return "No matches found";
   const tail = truncated ? `\n\n... results truncated at ${cap} matches; narrow your pattern.` : "";

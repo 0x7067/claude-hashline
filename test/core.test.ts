@@ -252,4 +252,25 @@ describe("hashlineSearch", () => {
     const out = await hashlineSearch(ctx, { pattern: "hit" });
     expect(out).toContain("plain.ts");
   });
+
+  test("paths arg scopes the search to a subdirectory (R5)", async () => {
+    mkdirSync(path.join(root, "sub"));
+    writeFileSync(path.join(root, "sub", "inside.ts"), "const hit = 1;\n");
+    writeFileSync(path.join(root, "root.ts"), "const hit = 2;\n");
+    const out = await hashlineSearch(ctx, { pattern: "hit", paths: ["sub"] });
+    expect(out).toContain("sub/inside.ts");
+    expect(out).not.toContain("root.ts");
+  });
+
+  test("a paths entry escaping the jail is rejected before searching (R8)", async () => {
+    await expect(hashlineSearch(ctx, { pattern: "x", paths: ["../escape"] })).rejects.toThrow(/outside the workspace/);
+  });
+  test("multiline arg matches a pattern spanning lines (R6)", async () => {
+    writeFileSync(path.join(root, "ml.ts"), "foo\nbar\n");
+    // Without multiline, ripgrep rejects a `\n` literal in the pattern (exit 2 → throw).
+    await expect(hashlineSearch(ctx, { pattern: "foo\\nbar" })).rejects.toThrow(/ripgrep|multiline|new line/i);
+    // With multiline, the same pattern matches across the two lines.
+    const out = await hashlineSearch(ctx, { pattern: "foo\\nbar", multiline: true });
+    expect(out).toMatch(/\[ml\.ts#[0-9A-F]{4}\]/);
+  });
 });
