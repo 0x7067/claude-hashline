@@ -16,9 +16,8 @@ import {
   type SnapshotStore,
   stripBom,
 } from "@oh-my-pi/hashline";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import * as path from "node:path";
-import ignore from "ignore";
 import { JailedFilesystem, PathEscapeError } from "./jailed-fs.ts";
 import { buildRipgrepArgs, runRipgrep } from "./ripgrep.ts";
 
@@ -95,18 +94,10 @@ export async function hashlineRead(ctx: HashlineContext, args: ReadArgs): Promis
   return `${header}\n${body}${tail}`;
 }
 
-// Context window defaults mirror oh-my-pi's `search` tool (search.contextBefore
-// = 1, search.contextAfter = 3): a hit shows one line above and three below.
-const SEARCH_CONTEXT_BEFORE = 1;
-const SEARCH_CONTEXT_AFTER = 3;
 /** Default cap on total emitted match lines across all files. */
 const DEFAULT_MAX_SEARCH_RESULTS = 50;
-/** Skip files larger than this (bytes) — binaries/minified blobs aren't editable views. */
-const MAX_SEARCH_FILE_BYTES = 1_000_000;
 /** Per-line column cap; longer lines are truncated with `…` (oh-my-pi maxColumns). */
 const MAX_SEARCH_COLUMNS = 512;
-/** Directory names never descended into during a search walk. */
-const SEARCH_SKIP_DIRS = new Set(["node_modules", ".git"]);
 
 export interface SearchArgs {
   /** Regex source matched per line. */
@@ -123,16 +114,6 @@ export interface SearchArgs {
   maxResults?: number;
 }
 
-/** Build a matcher from the root `.gitignore`, or null when absent/unreadable.
- * Mirrors oh-my-pi's default-on gitignore respect. */
-function loadGitignore(root: string): { ignores(rel: string): boolean } | null {
-  try {
-    return ignore().add(readFileSync(path.join(root, ".gitignore"), "utf8"));
-  } catch {
-    return null; // no .gitignore — nothing to filter
-  }
-}
-
 /**
  * Format one search row, mirroring oh-my-pi's `formatMatchLine` in hashline
  * mode: a match line is prefixed `*`, a context line a single space, so line
@@ -142,49 +123,6 @@ function loadGitignore(root: string): { ignores(rel: string): boolean } | null {
 function formatMatchLine(lineNumber: number, line: string, isMatch: boolean): string {
   const text = line.length > MAX_SEARCH_COLUMNS ? `${line.slice(0, MAX_SEARCH_COLUMNS)}…` : line;
   return `${isMatch ? "*" : " "}${lineNumber}:${text}`;
-}
-
-/** Recursively collect editable files under `dir`, skipping node_modules and
- * dot-directories (mirrors `bench/generate.ts` walk). Returns absolute paths. */
-function walkFiles(dir: string): string[] {
-  const out: string[] = [];
-  let names: string[];
-  try {
-    names = readdirSync(dir);
-  } catch {
-    return out;
-  }
-  for (const name of names) {
-    if (name.startsWith(".")) continue;
-    const full = path.join(dir, name);
-    let st: ReturnType<typeof statSync>;
-    try {
-      st = statSync(full);
-    } catch {
-      continue;
-    }
-    if (st.isDirectory()) {
-      if (SEARCH_SKIP_DIRS.has(name)) continue;
-      out.push(...walkFiles(full));
-    } else if (st.isFile()) {
-      out.push(full);
-    }
-  }
-  return out;
-}
-
-/** Merge 0-based hit indices into inclusive [start, end] windows padded by
- * SEARCH_CONTEXT_BEFORE/AFTER, collapsing overlapping/adjacent windows. */
-function mergeWindows(hits: number[], lineCount: number): Array<[number, number]> {
-  const windows: Array<[number, number]> = [];
-  for (const i of hits) {
-    const a = Math.max(0, i - SEARCH_CONTEXT_BEFORE);
-    const b = Math.min(lineCount - 1, i + SEARCH_CONTEXT_AFTER);
-    const last = windows[windows.length - 1];
-    if (last && a <= last[1] + 1) last[1] = Math.max(last[1], b);
-    else windows.push([a, b]);
-  }
-  return windows;
 }
 
 /** Strip ripgrep's leading `./` so the path is workspace-relative (rg prefixes
