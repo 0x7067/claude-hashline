@@ -16,6 +16,7 @@ import {
   type SnapshotStore,
   stripBom,
 } from "@oh-my-pi/hashline";
+import { readdirSync, statSync } from "node:fs";
 import { JailedFilesystem, PathEscapeError } from "./jailed-fs.ts";
 
 export interface HashlineContext {
@@ -37,6 +38,15 @@ export function createContext(root: string = process.env.HASHLINE_ROOT ?? proces
 
 const DEFAULT_MAX_READ_LINES = 2000;
 
+/** True if `absPath` exists and is a directory (false on any stat error). */
+function isDirectory(absPath: string): boolean {
+  try {
+    return statSync(absPath).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 export interface ReadArgs {
   path: string;
   /** 1-indexed start line. */
@@ -51,6 +61,19 @@ export interface ReadArgs {
  * view: a `[PATH#TAG]` header followed by `LINE:TEXT` rows (R1).
  */
 export async function hashlineRead(ctx: HashlineContext, args: ReadArgs): Promise<string> {
+  // Directory listing: if `path` is a directory, list its files instead of
+  // dead-ending on a misleading "File not found" file-read. The dominant
+  // genuine failure in the benchmark is models probing `read "."` to discover
+  // the target file; returning the listing makes that probe self-correcting.
+  const resolved = ctx.fs.canonicalPath(args.path); // throws PathEscapeError if it escapes
+  if (isDirectory(resolved)) {
+    const entries = readdirSync(resolved, { withFileTypes: true })
+      .filter(e => e.isFile())
+      .map(e => e.name)
+      .sort();
+    return `'${args.path}' is a directory, not a file. Files here: ${entries.join(", ") || "(none)"}\nRead a specific file to get its \`[PATH#TAG]\` and edit it.`;
+  }
+
   const raw = await ctx.fs.readText(args.path); // throws NotFoundError / PathEscapeError
   const normalized = normalizeToLF(stripBom(raw).text);
   const key = ctx.fs.canonicalPath(args.path);

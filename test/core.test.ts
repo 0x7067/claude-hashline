@@ -130,6 +130,17 @@ describe("symlinked-root canonicalization (jail false-positive regression)", () 
   });
 });
 
+describe("directory read lists files (discovery self-correction)", () => {
+  test("reading a directory returns its file listing, not a not-found error", async () => {
+    writeFileSync(path.join(root, "alpha.ts"), "export const a = 1;\n");
+    writeFileSync(path.join(root, "beta.ts"), "export const b = 2;\n");
+    const out = await hashlineRead(ctx, { path: "." });
+    expect(out).toMatch(/is a directory/);
+    expect(out).toContain("alpha.ts");
+    expect(out).toContain("beta.ts");
+  });
+});
+
 describe("file creation (R4/KTD10)", () => {
   test("tagless header + insert head body creates a new file", async () => {
     const res = await hashlineEdit(ctx, `[new.ts]\ninsert head:\n+export const x = 1;`);
