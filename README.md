@@ -1,32 +1,97 @@
 # claude-hashline
 
-A Claude Code plugin.
-
-> TODO: Describe what this plugin does and why someone would install it.
-
-## Structure
+Replaces `str_replace`-style editing in Claude Code with **hashline**: a
+line-anchored patch language. Instead of reproducing exact old text (and hitting
+"String to replace not found" retry loops), the model reads a file tagged with a
+whole-file content hash and edits by line number:
 
 ```
-claude-hashline/
-├── .claude-plugin/
-│   └── plugin.json          # Plugin manifest (required)
-├── commands/                # Slash commands (.md)
-├── agents/                  # Subagent definitions (.md)
-├── skills/                  # Auto-activating skills (<name>/SKILL.md)
-├── hooks/
-│   ├── hooks.json           # Event handler configuration
-│   └── scripts/             # Hook scripts
-├── .mcp.json                # MCP server definitions
-└── scripts/                 # Shared helper scripts
+[src/app.ts#9A46]
+1:export function hello() {
+2:  return "world";
+3:}
 ```
 
-Each component directory currently holds a placeholder example — rename or
-replace them with real components. Auto-discovery picks up any `.md` files in
-`commands/` and `agents/`, and any `SKILL.md` under `skills/*/`.
+```
+[src/app.ts#9A46]
+replace 2..2:
++  return "hashline";
+```
 
-## Development
+The patch engine is the published, MIT-licensed
+[`@oh-my-pi/hashline`](https://github.com/can1357/oh-my-pi) (see `NOTICE`). This
+plugin is the Claude Code integration: an MCP server exposing `read`/`edit`, and
+a hook that blocks the built-in editors so the model uses hashline.
 
-Reference intra-plugin paths with `${CLAUDE_PLUGIN_ROOT}` — never hardcode
-absolute paths.
+## How it works
 
-To try it locally, add this directory as a local plugin in Claude Code.
+- **MCP server** (`src/server.ts`, run under Bun) exposes two tools,
+  `mcp__plugin_claude-hashline_hashline__read` and `…__edit`.
+  - `read` tags output and records a whole-file snapshot keyed by absolute path.
+  - `edit` runs three gates the engine doesn't — **path containment** (edits
+    can't escape the workspace), **read-before-edit** (you must `read` a file
+    first), and **file creation** (a tagless `[path]` header creates a file) —
+    then applies the patch via the engine, which rejects/recovers stale tags.
+- **PreToolUse hook** (`hooks/`) denies built-in `Edit`/`Write`/`NotebookEdit`
+  and redirects to the hashline tool.
+
+## Install
+
+Requires **Bun ≥ 1.3.14**. From the plugin directory:
+
+```bash
+bun install
+```
+
+Add it as a local plugin in Claude Code. The MCP server and the block hook are
+wired via `.mcp.json` and `hooks/hooks.json`.
+
+## Escape hatch
+
+The hook blocks **all** built-in editing wherever the plugin is enabled. If the
+hashline tool ever misbehaves, disable the block out-of-band (the in-session
+agent can't, since `Write` is blocked):
+
+- set `HASHLINE_DISABLED=1` in the environment (read fresh on every call), or
+- create `~/.hashline-off`.
+
+A `.hashline-off` in the working directory is **ignored on purpose** — a cwd
+sentinel would let a cloned repo or a prompt-injection silently unblock editing.
+
+## Benchmark
+
+Measures hashline vs. the built-in editor across Claude tiers (`bench/`).
+
+```bash
+# 1. generate fixtures from a source corpus (e.g. a React checkout)
+bun run bench/generate.ts /path/to/react/packages out/fixtures --per-file 2
+
+# 2. run both arms across models (requires `claude-p` on PATH)
+bun run bench/run.ts out/fixtures \
+  --models claude-haiku-4-5,claude-sonnet-4-6 \
+  --arms hashline,control --max-turns 30 --out report.md
+```
+
+The report stratifies pass rate, edit-failure rate, output tokens, and turns by
+difficulty class (`simple` vs `hard-anchor`). Note the **confound**: the hashline
+arm forces an unfamiliar tool while the control uses Claude's RL-tuned editor, so
+a control-favoring result can't separate "hash format is worse" from "Claude
+never saw these tool names" without the optional `familiarity` arm. The
+formatter used for pass/fail is a deterministic placeholder — pin a real one
+before drawing conclusions.
+
+## Develop
+
+```bash
+bun test          # 25 tests (adapters, hook, benchmark core)
+bun run typecheck
+```
+
+## Status
+
+Phase 1 (plugin) is implemented and tested end-to-end: MCP handshake, read/edit
+adapters, containment, stale-tag and read-before-edit gates, file creation, and
+the block hook. Phase 2 (benchmark) is implemented; its deterministic parts
+(mutation, scoring, aggregation, arm/flag mapping, transcript parsing) are
+tested, and the live model run requires `claude-p` and a corpus. Grep tagging is
+deferred (`read` + `edit` only in v1); the model falls back to built-in `Grep`.
