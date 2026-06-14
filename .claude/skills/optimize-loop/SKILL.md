@@ -67,4 +67,6 @@ classification (not path-bugs or blocked-built-ins — those are artifacts).
   gaming the benchmark, not improving the harness. Only the two levers above.
 - The **confound** stands: gains may reflect the format getting easier for an
   RL-untrained syntax, not the format being good. Keep reporting it.
-- Run `benchmark-report` for the human-facing summary of any measurement.
+- For a human-facing summary of any single run, run `bun run bench/analyze.ts
+  <report.md>` (no `--json`) — it prints the ASCII summary + takeaways and writes
+  a full markdown analysis to `--out`.
