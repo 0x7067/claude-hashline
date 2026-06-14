@@ -49,11 +49,18 @@ space (column-aligned, never padded); context is asymmetric — 1 line before, 3
 after; case-insensitivity is an `i` boolean (not a raw flags string); over-long
 lines truncate to 512 columns with `…`; no-match returns `No matches found`.
 
-**4. Stay in-process; don't shell out.** oh-my-pi links ripgrep in-process to
-avoid fork-exec and missing-binary failures. When no native binding is available,
-an in-process language-level file walk (skipping `node_modules`/dot-dirs, with
-size and result caps) is the pragmatic analog — same philosophy, no `rg`
-dependency.
+**4. Shell out to a bundled ripgrep.** *(Superseded 2026-06-14 — this originally
+read "stay in-process; don't shell out," backed by an in-process file walk +
+JS-RegExp match.)* The walk was replaced by spawning ripgrep via
+`@vscode/ripgrep`, consuming its `--json` stream. The original concern was
+fork-exec cost and missing-binary failures; `@vscode/ripgrep` ships prebuilt
+per-platform binaries as optional dependencies (no postinstall download), so the
+missing-binary risk is gone. Shelling out buys a linear-time RE2 engine (the
+model-supplied pattern can no longer catastrophically backtrack), nested
+`.gitignore` honored via `--no-require-git`, and `paths`/`multiline` for free —
+none of which the hand-rolled walk had. Decisions 1–3 are unchanged: search is
+still a match-gated snapshot producer (snapshot recorded on ripgrep's per-file
+`begin` message) emitting the same `[PATH#TAG]` + `*`/space format.
 
 ## Why This Matters
 
