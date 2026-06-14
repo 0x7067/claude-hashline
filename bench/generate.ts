@@ -77,7 +77,12 @@ function main() {
       const targetName = path.basename(file);
       writeFileSync(path.join(dir, targetName), m.buggy);
       writeFileSync(path.join(dir, `${targetName}.expected`), source);
-      writeFileSync(path.join(dir, "task.md"), m.description);
+      // Name the target file in the task (benchmark realism): a real editor task
+      // tells you which file to fix. Without it the model must probe `read "."`
+      // to discover the lone file, an artifact that inflates discovery-aware
+      // tooling. See .claude/skills/optimize-loop (harness-vs-realism).
+      const task = `${m.description}\n\nFile: \`${targetName}\`.`;
+      writeFileSync(path.join(dir, "task.md"), task);
       writeFileSync(
         path.join(dir, "meta.json"),
         JSON.stringify({ id, targetName, kind: m.kind, difficulty: m.difficulty, line: m.line, sourceFile: path.relative(corpusDir, file) }, null, 2),
