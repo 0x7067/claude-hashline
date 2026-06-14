@@ -9,4 +9,5 @@ node_modules/
 bench/fixtures/
 # Benchmark report output (generated; regenerate via bench/run.ts)
 report*.md
+report*.records.json
 report.err
