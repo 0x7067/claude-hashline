@@ -30,6 +30,11 @@ Operations:
 - \`insert before N:\` / \`insert after N:\` — insert body rows before/after line N.
 - \`insert head:\` / \`insert tail:\` — insert body rows at the start/end of the file.
 
+Line ranges use TWO DOTS, never a colon between the numbers. Write \`replace 12..14:\`
+for a span and \`replace 23:\` for a single line. A colon range like \`replace 23:23:\`
+or \`replace 12:14:\` is INVALID and will be rejected — the \`N:\` in a \`read\` row
+(\`23:export …\`) labels the line, it is not range syntax.
+
 Body rows are \`+TEXT\`; \`+\` alone is a blank line. To write a literal line starting
 with \`+\` or \`-\`, prefix it (\`++text\`, \`+-text\`). Issue one hunk per range.
 
