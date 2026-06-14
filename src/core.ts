@@ -226,6 +226,28 @@ export function normalizeColonRanges(input: string): string {
   return input.replace(/^(\s*(?:replace|delete)\s+\d+):(\d+)/gm, "$1..$2");
 }
 
+/** Context lines shown on each side of the change in an edit-result window (R3). */
+const EDIT_WINDOW_CONTEXT = 3;
+
+/**
+ * Build a re-anchored numbered window of post-edit content around the change
+ * (R1-R3). An edit changes the file's tag and shifts line numbers, so returning
+ * a `read`-equivalent view lets the model chain a follow-up edit with no re-read.
+ * The window anchors at `firstChangedLine` (the package exposes no last-changed
+ * line); content outside it is summarized with a marker so large edits don't
+ * echo the whole file. Mirrors `hashlineRead`'s slice + `formatNumberedLines`.
+ */
+function formatEditWindow(after: string, firstChangedLine: number): string {
+  const allLines = after.split("\n");
+  const start = Math.max(1, firstChangedLine - EDIT_WINDOW_CONTEXT);
+  const end = Math.min(allLines.length, firstChangedLine + EDIT_WINDOW_CONTEXT);
+  const slice = allLines.slice(start - 1, end).join("\n");
+  const head = start > 1 ? `... ${start - 1} earlier line(s)\n` : "";
+  const remaining = allLines.length - end;
+  const tail = remaining > 0 ? `\n... ${remaining} more line(s); re-read for lines beyond the window` : "";
+  return `${head}${formatNumberedLines(slice, start)}${tail}`;
+}
+
 /**
  * Apply a hashline patch (R3). Runs three adapter-side gates the package does
  * not — path containment (KTD9), read-before-edit (R6/feas-03), and new-file
@@ -284,8 +306,12 @@ export async function hashlineEdit(ctx: HashlineContext, input: string): Promise
   try {
     const result = await ctx.patcher.apply(patch);
     const blocks = result.sections
-      .map(s => (s.op === "noop" ? `${s.path}: no change` : `${s.header} (${s.op})`))
-      .join("\n");
+      .map(s => {
+        if (s.op === "noop") return `${s.header} (no change)`;
+        const window = s.firstChangedLine !== undefined ? `\n${formatEditWindow(s.after, s.firstChangedLine)}` : "";
+        return `${s.header} (${s.op})${window}`;
+      })
+      .join("\n\n");
     return { text: blocks, isError: false };
   } catch (err) {
     return { text: errMessage(err), isError: true };

@@ -81,6 +81,52 @@ describe("colon-range tolerance (optimize-loop cycle 1)", () => {
   });
 });
 
+describe("edit-result window enables chaining (R1, R2)", () => {
+  test("edit returns post-edit tag + numbered window; a chained edit applies with no re-read", async () => {
+    writeFileSync(path.join(root, "a.ts"), "one\ntwo\nthree\nfour\nfive\n");
+    const tag1 = tagFrom(await hashlineRead(ctx, { path: "a.ts" }));
+    const r1 = await hashlineEdit(ctx, `[a.ts#${tag1}]\nreplace 2..2:\n+TWO`);
+    expect(r1.isError).toBe(false);
+    // Window shows the changed line at its post-edit number.
+    expect(r1.text).toContain("2:TWO");
+    // Chain a second edit using ONLY the tag from r1 — no intervening read.
+    const tag2 = tagFrom(r1.text);
+    const r2 = await hashlineEdit(ctx, `[a.ts#${tag2}]\nreplace 4..4:\n+FOUR`);
+    expect(r2.isError).toBe(false);
+    expect(readFileSync(path.join(root, "a.ts"), "utf8")).toBe("one\nTWO\nthree\nFOUR\nfive\n");
+  });
+
+  test("window tag matches a fresh read of the post-edit file (re-anchor correctness)", async () => {
+    writeFileSync(path.join(root, "a.ts"), "a\nb\nc\n");
+    const tag = tagFrom(await hashlineRead(ctx, { path: "a.ts" }));
+    const r = await hashlineEdit(ctx, `[a.ts#${tag}]\nreplace 2..2:\n+B`);
+    expect(r.isError).toBe(false);
+    const freshTag = tagFrom(await hashlineRead(ctx, { path: "a.ts" }));
+    expect(tagFrom(r.text)).toBe(freshTag);
+  });
+
+  test("insert shifts numbers; chained edit references the shifted line with no re-read", async () => {
+    writeFileSync(path.join(root, "a.ts"), "one\ntwo\nthree\n");
+    const tag1 = tagFrom(await hashlineRead(ctx, { path: "a.ts" }));
+    // Insert two lines after line 1 -> "three" moves from line 3 to line 5.
+    const r1 = await hashlineEdit(ctx, `[a.ts#${tag1}]\ninsert after 1:\n+x\n+y`);
+    expect(r1.isError).toBe(false);
+    const tag2 = tagFrom(r1.text);
+    const r2 = await hashlineEdit(ctx, `[a.ts#${tag2}]\nreplace 5..5:\n+THREE`);
+    expect(r2.isError).toBe(false);
+    expect(readFileSync(path.join(root, "a.ts"), "utf8")).toBe("one\nx\ny\ntwo\nTHREE\n");
+  });
+
+  test("noop edit surfaces the tag and no window", async () => {
+    writeFileSync(path.join(root, "a.ts"), "one\ntwo\n");
+    const tag = tagFrom(await hashlineRead(ctx, { path: "a.ts" }));
+    const r = await hashlineEdit(ctx, `[a.ts#${tag}]\nreplace 1..1:\n+one`); // identical -> noop
+    expect(r.isError).toBe(false);
+    expect(r.text).toContain("no change");
+    expect(r.text).toMatch(/^\[a\.ts#[0-9A-F]{4}\]/);
+  });
+});
+
 describe("hashlineEdit ops (R3)", () => {
   test("replace, insert after, insert head, delete", async () => {
     writeFileSync(path.join(root, "a.ts"), "one\ntwo\nthree\n");
