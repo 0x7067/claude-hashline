@@ -82,19 +82,26 @@ workflow nudge, not a security boundary — the jailed MCP filesystem is the rea
 boundary. Don't rely on the block to contain a hostile model. For an opt-out that
 repo contents can't spoof, use `~/.hashline-off` or `HASHLINE_DISABLED`.
 
-## Claude memory carve-out
+## Jail carve-outs
 
 The jailed filesystem normally confines every `read`/`edit`/`search` to the
-workspace root (cwd or `HASHLINE_ROOT`). When `HASHLINE_ALLOW_MEMORY=1` (the
-default in the published plugin), the jail **additionally** allows any Claude
-Code per-project memory dir — `<configDir>/projects/<project>/memory/` and below
-— so the model can read and write its auto-memory through the hashline `edit`
-tool instead of falling back to a shell heredoc. `<configDir>` honors
-`CLAUDE_CONFIG_DIR` (default `~/.claude`). The carve-out is scoped to the
-`.../projects/<slug>/memory/**` subtree only: session transcripts, settings, and
-everything else under `~/.claude` remain outside the jail and are not writable.
-Set `HASHLINE_ALLOW_MEMORY=0` (or unset it) to confine edits strictly to the
-workspace.
+workspace root (cwd or `HASHLINE_ROOT`). Two opt-in, additive carve-outs widen
+it (both default-on in the published plugin, default-off in the library):
+
+- **`HASHLINE_ALLOW_MEMORY=1`** — also allow any Claude Code per-project memory
+  dir, `<configDir>/projects/<project>/memory/` and below, so the model can read
+  and write its auto-memory through the hashline `edit` tool instead of falling
+  back to a shell heredoc. `<configDir>` honors `CLAUDE_CONFIG_DIR` (default
+  `~/.claude`). Scoped to the `.../projects/<slug>/memory/**` subtree only:
+  session transcripts, settings, and everything else under `~/.claude` stay
+  outside the jail.
+- **`HASHLINE_ALLOW_TMP=1`** — also allow the system temp dir (`os.tmpdir()`,
+  e.g. `/tmp` or macOS `/var/folders/...`) and below, for staging scratch files
+  such as a PR body fed to `gh pr create --body-file`. The temp dir is
+  ephemeral, world-writable scratch space, so the widening is bounded.
+
+Set either flag to `0` (or unset it) to drop that carve-out; with both off,
+edits are confined strictly to the workspace.
 
 ## Benchmark
 

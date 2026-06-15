@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { claudeMemoryMatcher, createContext, hashlineEdit, hashlineRead, hashlineSearch, type HashlineContext, normalizeColonRanges } from "../src/core.ts";
+import { claudeMemoryMatcher, createContext, hashlineEdit, hashlineRead, hashlineSearch, type HashlineContext, normalizeColonRanges, systemTempMatcher } from "../src/core.ts";
 import { JailedFilesystem } from "../src/jailed-fs.ts";
 
 let root: string;
@@ -248,6 +248,53 @@ describe("Claude memory carve-out (HASHLINE_ALLOW_MEMORY)", () => {
     expect(match(path.join(base, "slug", "sessions", "x.md"))).toBe(false);
     expect(match(path.join(base, "slug", "x.md"))).toBe(false);
     expect(match(path.join(base, "memory", "x.md"))).toBe(false);
+    expect(match("/etc/passwd")).toBe(false);
+  });
+});
+
+describe("system temp-dir carve-out (HASHLINE_ALLOW_TMP)", () => {
+  // `root` (from the top-level beforeEach) lives under tmpdir, so to prove the
+  // tmp carve-out — not the workspace root — is what permits the write, target a
+  // sibling temp dir that is under tmpdir but OUTSIDE root.
+  let sibling: string;
+  let savedAllow: string | undefined;
+
+  beforeEach(() => {
+    savedAllow = process.env.HASHLINE_ALLOW_TMP;
+    sibling = mkdtempSync(path.join(tmpdir(), "hashline-sib-"));
+  });
+  afterEach(() => {
+    rmSync(sibling, { recursive: true, force: true });
+    if (savedAllow === undefined) delete process.env.HASHLINE_ALLOW_TMP;
+    else process.env.HASHLINE_ALLOW_TMP = savedAllow;
+  });
+
+  test("flag on: read + create + edit succeed for a temp file outside the root", async () => {
+    process.env.HASHLINE_ALLOW_TMP = "1";
+    const c = createContext(root);
+    const tmpFile = path.join(sibling, "pr-body.md");
+    const created = await hashlineEdit(c, `[${tmpFile}]\ninsert head:\n+# PR\n+body`);
+    expect(created.isError).toBe(false);
+    expect(readFileSync(tmpFile, "utf8")).toContain("# PR");
+    const out = await hashlineRead(c, { path: tmpFile });
+    const res = await hashlineEdit(c, `[${tmpFile}#${tagFrom(out)}]\nreplace 2..2:\n+changed`);
+    expect(res.isError).toBe(false);
+    expect(readFileSync(tmpFile, "utf8")).toContain("changed");
+  });
+
+  test("flag off: a temp file outside the root is rejected (default-conservative)", async () => {
+    delete process.env.HASHLINE_ALLOW_TMP;
+    const c = createContext(root);
+    const tmpFile = path.join(sibling, "pr-body.md");
+    writeFileSync(tmpFile, "x\n");
+    await expect(hashlineRead(c, { path: tmpFile })).rejects.toThrow(/outside the workspace/);
+  });
+
+  test("systemTempMatcher: accepts tmpdir paths, rejects elsewhere", () => {
+    const match = systemTempMatcher();
+    const base = realpathSync(tmpdir());
+    expect(match(path.join(base, "scratch.md"))).toBe(true);
+    expect(match(path.join(base, "a", "b", "c.md"))).toBe(true);
     expect(match("/etc/passwd")).toBe(false);
   });
 });

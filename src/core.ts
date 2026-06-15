@@ -59,10 +59,26 @@ export function claudeMemoryMatcher(): (resolved: string) => boolean {
   };
 }
 
+/**
+ * Build a predicate that permits paths under the system temp dir (`os.tmpdir()`,
+ * honoring `HASHLINE_TMPDIR` for tests). Lets the model stage scratch files —
+ * e.g. a PR body to feed `gh pr create --body-file` — instead of dead-ending on
+ * the jail. The temp dir is ephemeral, world-writable scratch space, so the
+ * widening is bounded. Exported for direct unit testing.
+ */
+export function systemTempMatcher(): (resolved: string) => boolean {
+  const tmpBase = canonicalize(path.resolve(process.env.HASHLINE_TMPDIR ?? os.tmpdir()));
+  return (resolved: string): boolean => resolved === tmpBase || resolved.startsWith(tmpBase + path.sep);
+}
+
 /** Build a fresh context rooted at `root` (defaults to HASHLINE_ROOT or cwd). */
 export function createContext(root: string = process.env.HASHLINE_ROOT ?? process.cwd()): HashlineContext {
-  // Opt-in carve-out (HASHLINE_ALLOW_MEMORY): also allow the Claude memory dir.
-  const extraAllow = envEnabled(process.env.HASHLINE_ALLOW_MEMORY) ? claudeMemoryMatcher() : undefined;
+  // Opt-in, additive carve-outs (each OR'd onto the in-root check): the Claude
+  // memory dir (HASHLINE_ALLOW_MEMORY) and the system temp dir (HASHLINE_ALLOW_TMP).
+  const allows: Array<(resolved: string) => boolean> = [];
+  if (envEnabled(process.env.HASHLINE_ALLOW_MEMORY)) allows.push(claudeMemoryMatcher());
+  if (envEnabled(process.env.HASHLINE_ALLOW_TMP)) allows.push(systemTempMatcher());
+  const extraAllow = allows.length ? (resolved: string) => allows.some(fn => fn(resolved)) : undefined;
   const fs = new JailedFilesystem(root, extraAllow);
   const snapshots = new InMemorySnapshotStore();
   // No blockResolver: tree-sitter `block` ops are out of v1 (KTD1), so they
