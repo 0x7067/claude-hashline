@@ -17,8 +17,9 @@ import {
   stripBom,
 } from "@oh-my-pi/hashline";
 import { readdirSync, statSync } from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
-import { JailedFilesystem, PathEscapeError } from "./jailed-fs.ts";
+import { canonicalize, JailedFilesystem, PathEscapeError } from "./jailed-fs.ts";
 import { buildRipgrepArgs, runRipgrep } from "./ripgrep.ts";
 
 export interface HashlineContext {
@@ -28,9 +29,41 @@ export interface HashlineContext {
   root: string;
 }
 
+/**
+ * Treat `"0"`, `"false"`, and empty/unset as off; anything else as on. Keeps the
+ * env switch forgiving for the plugin (`"1"`) without enabling on a bare `""`.
+ */
+function envEnabled(v: string | undefined): boolean {
+  if (v === undefined) return false;
+  const t = v.trim().toLowerCase();
+  return t !== "" && t !== "0" && t !== "false";
+}
+
+/**
+ * Build a predicate that permits paths under Claude Code's per-project memory
+ * dir: `<configDir>/projects/<slug>/memory[/**]`, for ANY project. The `<slug>`
+ * segment is a wildcard, so no reproduction of Claude's cwd→slug encoding is
+ * needed and it holds for every project (dots/spaces in the path included).
+ * Honors `CLAUDE_CONFIG_DIR` (matching how the bench locates `~/.claude`).
+ * Nothing else under `~/.claude` (transcripts, settings) is matched. Exported
+ * for direct unit testing of the segment logic.
+ */
+export function claudeMemoryMatcher(): (resolved: string) => boolean {
+  const configDir = canonicalize(path.resolve(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude")));
+  const projectsBase = path.join(configDir, "projects");
+  return (resolved: string): boolean => {
+    if (resolved !== projectsBase && !resolved.startsWith(projectsBase + path.sep)) return false;
+    const segs = path.relative(projectsBase, resolved).split(path.sep);
+    // `<slug>/memory` or deeper; reject `projects/memory/...` (no slug segment).
+    return segs.length >= 2 && segs[1] === "memory";
+  };
+}
+
 /** Build a fresh context rooted at `root` (defaults to HASHLINE_ROOT or cwd). */
 export function createContext(root: string = process.env.HASHLINE_ROOT ?? process.cwd()): HashlineContext {
-  const fs = new JailedFilesystem(root);
+  // Opt-in carve-out (HASHLINE_ALLOW_MEMORY): also allow the Claude memory dir.
+  const extraAllow = envEnabled(process.env.HASHLINE_ALLOW_MEMORY) ? claudeMemoryMatcher() : undefined;
+  const fs = new JailedFilesystem(root, extraAllow);
   const snapshots = new InMemorySnapshotStore();
   // No blockResolver: tree-sitter `block` ops are out of v1 (KTD1), so they
   // throw on apply. The adapted tool description never emits them.

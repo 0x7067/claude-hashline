@@ -82,6 +82,20 @@ workflow nudge, not a security boundary — the jailed MCP filesystem is the rea
 boundary. Don't rely on the block to contain a hostile model. For an opt-out that
 repo contents can't spoof, use `~/.hashline-off` or `HASHLINE_DISABLED`.
 
+## Claude memory carve-out
+
+The jailed filesystem normally confines every `read`/`edit`/`search` to the
+workspace root (cwd or `HASHLINE_ROOT`). When `HASHLINE_ALLOW_MEMORY=1` (the
+default in the published plugin), the jail **additionally** allows any Claude
+Code per-project memory dir — `<configDir>/projects/<project>/memory/` and below
+— so the model can read and write its auto-memory through the hashline `edit`
+tool instead of falling back to a shell heredoc. `<configDir>` honors
+`CLAUDE_CONFIG_DIR` (default `~/.claude`). The carve-out is scoped to the
+`.../projects/<slug>/memory/**` subtree only: session transcripts, settings, and
+everything else under `~/.claude` remain outside the jail and are not writable.
+Set `HASHLINE_ALLOW_MEMORY=0` (or unset it) to confine edits strictly to the
+workspace.
+
 ## Benchmark
 
 Measures hashline vs. the built-in editor across Claude tiers (`bench/`).

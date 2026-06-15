@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
-import { createContext, hashlineEdit, hashlineRead, hashlineSearch, type HashlineContext, normalizeColonRanges } from "../src/core.ts";
+import { claudeMemoryMatcher, createContext, hashlineEdit, hashlineRead, hashlineSearch, type HashlineContext, normalizeColonRanges } from "../src/core.ts";
 import { JailedFilesystem } from "../src/jailed-fs.ts";
 
 let root: string;
@@ -172,6 +172,83 @@ describe("path containment in edit (KTD9 / SEC-002)", () => {
     const res = await hashlineEdit(ctx, `[../../evil.ts#AAAA]\nreplace 1..1:\n+pwned`);
     expect(res.isError).toBe(true);
     expect(res.text).toMatch(/outside the workspace/);
+  });
+});
+
+describe("Claude memory carve-out (HASHLINE_ALLOW_MEMORY)", () => {
+  let configDir: string;
+  let memDir: string;
+  let savedConfig: string | undefined;
+  let savedAllow: string | undefined;
+
+  beforeEach(() => {
+    savedConfig = process.env.CLAUDE_CONFIG_DIR;
+    savedAllow = process.env.HASHLINE_ALLOW_MEMORY;
+    configDir = mkdtempSync(path.join(tmpdir(), "hashline-cfg-"));
+    memDir = path.join(configDir, "projects", "-some-slug", "memory");
+    mkdirSync(memDir, { recursive: true });
+    process.env.CLAUDE_CONFIG_DIR = configDir;
+  });
+  afterEach(() => {
+    rmSync(configDir, { recursive: true, force: true });
+    if (savedConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = savedConfig;
+    if (savedAllow === undefined) delete process.env.HASHLINE_ALLOW_MEMORY;
+    else process.env.HASHLINE_ALLOW_MEMORY = savedAllow;
+  });
+
+  test("flag on: read + create + edit succeed under projects/<slug>/memory", async () => {
+    process.env.HASHLINE_ALLOW_MEMORY = "1";
+    const c = createContext(root);
+    const memFile = path.join(memDir, "foo.md");
+    const created = await hashlineEdit(c, `[${memFile}]\ninsert head:\n+# note\n+body`);
+    expect(created.isError).toBe(false);
+    expect(readFileSync(memFile, "utf8")).toContain("# note");
+    const out = await hashlineRead(c, { path: memFile });
+    expect(out).toContain("1:# note");
+    const res = await hashlineEdit(c, `[${memFile}#${tagFrom(out)}]\nreplace 2..2:\n+changed`);
+    expect(res.isError).toBe(false);
+    expect(readFileSync(memFile, "utf8")).toContain("changed");
+  });
+
+  test("flag on: non-memory siblings under the same project are still rejected", async () => {
+    process.env.HASHLINE_ALLOW_MEMORY = "1";
+    const c = createContext(root);
+    const sib = path.join(configDir, "projects", "-some-slug", "sessions", "x.md");
+    mkdirSync(path.dirname(sib), { recursive: true });
+    writeFileSync(sib, "secret\n");
+    await expect(hashlineRead(c, { path: sib })).rejects.toThrow(/outside the workspace/);
+    const top = path.join(configDir, "projects", "-some-slug", "x.md");
+    writeFileSync(top, "secret\n");
+    await expect(hashlineRead(c, { path: top })).rejects.toThrow(/outside the workspace/);
+  });
+
+  test("flag on: projects/memory with no slug segment is rejected", async () => {
+    process.env.HASHLINE_ALLOW_MEMORY = "1";
+    const c = createContext(root);
+    const noSlug = path.join(configDir, "projects", "memory", "x.md");
+    mkdirSync(path.dirname(noSlug), { recursive: true });
+    writeFileSync(noSlug, "secret\n");
+    await expect(hashlineRead(c, { path: noSlug })).rejects.toThrow(/outside the workspace/);
+  });
+
+  test("flag off: the memory path is rejected (default-conservative)", async () => {
+    delete process.env.HASHLINE_ALLOW_MEMORY;
+    const c = createContext(root);
+    const memFile = path.join(memDir, "foo.md");
+    writeFileSync(memFile, "x\n");
+    await expect(hashlineRead(c, { path: memFile })).rejects.toThrow(/outside the workspace/);
+  });
+
+  test("claudeMemoryMatcher: segment logic + CLAUDE_CONFIG_DIR honor", () => {
+    const match = claudeMemoryMatcher();
+    const base = path.join(realpathSync(configDir), "projects");
+    expect(match(path.join(base, "slug", "memory"))).toBe(true);
+    expect(match(path.join(base, "slug", "memory", "deep", "n.md"))).toBe(true);
+    expect(match(path.join(base, "slug", "sessions", "x.md"))).toBe(false);
+    expect(match(path.join(base, "slug", "x.md"))).toBe(false);
+    expect(match(path.join(base, "memory", "x.md"))).toBe(false);
+    expect(match("/etc/passwd")).toBe(false);
   });
 });
 

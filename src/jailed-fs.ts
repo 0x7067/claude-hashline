@@ -10,7 +10,7 @@ import { NodeFilesystem } from "@oh-my-pi/hashline";
  * spuriously reject valid in-workspace paths) AND defeats symlink-based escapes
  * (a link inside the workspace pointing out resolves to its real target).
  */
-function canonicalize(abs: string): string {
+export function canonicalize(abs: string): string {
   const segs: string[] = [];
   let cur = abs;
   for (;;) {
@@ -36,7 +36,7 @@ export class PathEscapeError extends Error {
   constructor(requested: string, resolved: string, root: string) {
     super(
       `Path '${requested}' resolves to '${resolved}', which is outside the workspace root '${root}'. ` +
-        `hashline edits are confined to the workspace.`,
+        `hashline edits are confined to the workspace (and, when enabled, the Claude memory dir).`,
     );
     this.name = "PathEscapeError";
   }
@@ -52,19 +52,26 @@ export class PathEscapeError extends Error {
  */
 export class JailedFilesystem extends NodeFilesystem {
   readonly root: string;
+  /** Additive containment escape hatch: a resolved absolute path outside
+   * {@link root} is still permitted when this predicate returns true. Keeps the
+   * jail policy-free — the carve-out (e.g. the Claude memory dir) is injected by
+   * the caller, not hardcoded here. */
+  private readonly extraAllow?: (resolved: string) => boolean;
 
-  constructor(root: string) {
+  constructor(root: string, extraAllow?: (resolved: string) => boolean) {
     super();
     this.root = canonicalize(path.resolve(root));
+    this.extraAllow = extraAllow;
   }
 
   /** Resolve `p` against the root and reject anything that escapes it. Both the
    * root and the target are canonicalized (symlinks resolved) so the prefix
    * check compares real paths — otherwise a symlinked root or a realpath'd
-   * input would falsely read as an escape (and a symlink escape would slip). */
+   * input would falsely read as an escape (and a symlink escape would slip).
+   * A path outside the root is still allowed if {@link extraAllow} accepts it. */
   resolveInside(p: string): string {
     const resolved = canonicalize(path.resolve(this.root, p));
-    if (resolved !== this.root && !resolved.startsWith(this.root + path.sep)) {
+    if (resolved !== this.root && !resolved.startsWith(this.root + path.sep) && !this.extraAllow?.(resolved)) {
       throw new PathEscapeError(p, resolved, this.root);
     }
     return resolved;
