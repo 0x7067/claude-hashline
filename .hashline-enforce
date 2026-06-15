@@ -1,3 +1,0 @@
-# Presence of this file opts this repo into hashline edit enforcement.
-# The block hook (hooks/scripts/block-edit.sh) denies built-in Edit/Write here
-# so editing goes through the hashline tool. Remove this file to opt out.

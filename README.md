@@ -50,35 +50,37 @@ bun install
 ```
 
 Add it as a local plugin in Claude Code. The MCP server is declared in
-`.claude-plugin/plugin.json` (`mcpServers.hashline`) and the block hook in
-`hooks/hooks.json`. Safe to enable **globally** — see Enforcement.
+`.claude-plugin/plugin.json` (`mcpServers.hashline`) and the block + nudge hooks
+in `hooks/hooks.json`. Safe to enable **globally** — see Enforcement.
 
-## Enforcement (opt-in)
+## Enforcement (on by default)
 
-The block hook is **off by default**, so a globally enabled plugin never blocks
-editing in a repo that didn't ask for it (which would otherwise break any tool
-that uses the built-in editors, including other agents and skills). Enforcement
-engages only when a project opts in:
+The block hook is **on by default**: a globally enabled plugin denies the
+built-in `Edit`/`Write`/`NotebookEdit` tools in every repo and redirects them to
+the hashline edit tool. A `SessionStart` hook also nudges the model toward
+`hashline__edit` up front, so it doesn't burn a turn reaching for a blocked
+built-in.
 
-- a `.hashline-enforce` marker file at the repo root (or any ancestor of the
-  working directory) — committable, so a team shares the setting, or
-- `HASHLINE_ENFORCE=1` in the environment (session- or machine-wide).
+Because this blocks editing everywhere, any repo where another tool or skill
+relies on the built-in editors must **opt out** (see below).
 
-Where enforcement is on, built-in `Edit`/`Write`/`NotebookEdit` are denied and
-redirected to the hashline tool.
+## Opting out
 
-## Escape hatch
+To allow the built-in editors again, use any of:
 
-To turn enforcement off in an enforced project (the in-session agent can't, since
-`Write` is blocked):
+- a `.hashline-off` marker file at the repo root (or any ancestor of the working
+  directory) — committable, so a team excludes a repo by checking it in;
+- `HASHLINE_DISABLED=1` in the environment (read fresh on every call) — the
+  out-of-band recovery valve when the hashline edit tool itself is broken, since
+  the in-session agent can't remove a marker while `Write` is blocked;
+- `~/.hashline-off` — a HOME-trusted sentinel with the same recovery role.
 
-- remove the `.hashline-enforce` marker, or
-- set `HASHLINE_DISABLED=1` in the environment (read fresh on every call), or
-- create `~/.hashline-off`.
-
-A `.hashline-off` in the working directory is **ignored on purpose** — a cwd
-sentinel would let a cloned repo or a prompt-injection silently unblock editing.
-(A cwd `.hashline-enforce` is fine: it can only add restriction, never bypass.)
+**Security note.** A cwd/ancestor `.hashline-off` can be shipped in a cloned repo
+or dropped by a prompt-injected agent (`touch .hashline-off`), silently disabling
+the block. That is an accepted trade-off for per-repo opt-out: the block is a
+workflow nudge, not a security boundary — the jailed MCP filesystem is the real
+boundary. Don't rely on the block to contain a hostile model. For an opt-out that
+repo contents can't spoof, use `~/.hashline-off` or `HASHLINE_DISABLED`.
 
 ## Benchmark
 
