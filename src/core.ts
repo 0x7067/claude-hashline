@@ -21,6 +21,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { canonicalize, JailedFilesystem, PathEscapeError } from "./jailed-fs.ts";
 import { buildRipgrepArgs, runRipgrep } from "./ripgrep.ts";
+import { recordEditSaving } from "./savings.ts";
 
 export interface HashlineContext {
   fs: JailedFilesystem;
@@ -309,7 +310,7 @@ export async function hashlineEdit(ctx: HashlineContext, input: string): Promise
   const createSections = scanTaglessCreateSections(input);
   if (createSections.length > 0) {
     try {
-      return await handleCreates(ctx, createSections);
+      return await handleCreates(ctx, createSections, input);
     } catch (err) {
       return { text: errMessage(err), isError: true };
     }
@@ -361,6 +362,8 @@ export async function hashlineEdit(ctx: HashlineContext, input: string): Promise
         return `${s.header} (${s.op})${window}`;
       })
       .join("\n\n");
+    // Track output tokens saved vs the full-file Write this edit replaced.
+    recordEditSaving(ctx.root, input, result.sections.filter(s => s.op !== "noop").map(s => s.after));
     return { text: blocks, isError: false };
   } catch (err) {
     return { text: errMessage(err), isError: true };
@@ -398,8 +401,9 @@ function scanTaglessCreateSections(input: string): CreateSection[] {
   return out.filter(s => s.body.length > 0);
 }
 
-async function handleCreates(ctx: HashlineContext, sections: CreateSection[]): Promise<EditResult> {
+async function handleCreates(ctx: HashlineContext, sections: CreateSection[], input: string): Promise<EditResult> {
   const headers: string[] = [];
+  const contents: string[] = [];
   for (const s of sections) {
     ctx.fs.resolveInside(s.path); // KTD9
     if (await ctx.fs.exists(s.path)) {
@@ -410,11 +414,14 @@ async function handleCreates(ctx: HashlineContext, sections: CreateSection[]): P
     }
     const content = s.body.endsWith("\n") ? s.body : `${s.body}\n`;
     await ctx.fs.writeText(s.path, content);
+    contents.push(content);
     const key = ctx.fs.canonicalPath(s.path);
     const hash = ctx.snapshots.record(key, normalizeToLF(content));
     void computeFileHash; // hash already via record()
     headers.push(`${formatHashlineHeader(s.path, hash)} (create)`);
   }
+  // A create emits the full body either way, so savings are ~0; record for parity.
+  recordEditSaving(ctx.root, input, contents);
   return { text: headers.join("\n"), isError: false };
 }
 

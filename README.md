@@ -103,6 +103,30 @@ it (both default-on in the published plugin, default-off in the library):
 Set either flag to `0` (or unset it) to drop that carve-out; with both off,
 edits are confined strictly to the workspace.
 
+## Token savings tracker
+
+Every hashline edit replaces a full-file `Write`: a `Write` would have re-emitted
+the entire post-edit file, while hashline only emits the small patch the model
+typed. The plugin records that difference per edit into a per-project,
+append-only ledger so you can see the running total.
+
+```bash
+bun run src/savings.ts            # rollup for the current project
+# or, inside Claude Code:
+/hashline-savings
+```
+
+- **On by default.** Opt out with `HASHLINE_TRACK_SAVINGS=0`.
+- **Storage.** One JSONL file per project root under
+  `<configDir>/hashline-savings/` (`CLAUDE_CONFIG_DIR`, default `~/.claude`;
+  override with `HASHLINE_SAVINGS_DIR`). It lives outside your repo, so it never
+  pollutes the tree. Writes are non-fatal — a ledger failure never breaks an edit.
+- **Estimates only.** Token counts use a `chars/4` heuristic. Anthropic ships no
+  exact local tokenizer for current Claude models (the tokenizer changed with
+  Opus 4.7), and the only ground truth — the `count_tokens` API or real-call
+  `usage` fields — needs a network round-trip and auth, which a synchronous,
+  offline edit path can't take. Treat the number as directional, not billable.
+
 ## Benchmark
 
 Measures hashline vs. the built-in editor across Claude tiers (`bench/`).
