@@ -36,3 +36,11 @@ The closed feedback process that hill-climbs the edit harness against the benchm
 
 ### Edit-fail
 A benchmark outcome where the model's patch is rejected for malformed edit syntax, as distinct from a task-correctness miss where a syntactically valid edit produces the wrong result. Edit-fails are the harness-addressable failure class; correctness misses are not.
+
+## Token accounting
+
+### Savings ledger
+The per-project, append-only record of output tokens each hashline edit saved versus the editor it replaced. One JSONL row per successful edit, summed by the `/hashline-savings` rollup. Tracks wins only — failed edits are not recorded — and counts are chars/4 estimates, directional rather than billable.
+
+### Counterfactual baseline
+The alternative edit the saving is measured against. The honest baseline is `str_replace` (the old text plus the new text the model would otherwise have typed), so a saving is "the old text you didn't reproduce" — not a full-file `Write` of the whole post-edit file, which overstates the saving by roughly the file size and is the strawman the metric must avoid.
