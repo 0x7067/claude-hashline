@@ -14,11 +14,19 @@ function tagFrom(readOutput: string): string {
   return m[1];
 }
 
+// Edits here would otherwise append real ledgers to ~/.claude/hashline-savings/
+// (recordEditSaving uses the live config dir). Disable tracking for this file.
+const savedTrack = process.env.HASHLINE_TRACK_SAVINGS;
 beforeEach(() => {
+  process.env.HASHLINE_TRACK_SAVINGS = "0";
   root = mkdtempSync(path.join(tmpdir(), "hashline-test-"));
   ctx = createContext(root);
 });
-afterEach(() => rmSync(root, { recursive: true, force: true }));
+afterEach(() => {
+  rmSync(root, { recursive: true, force: true });
+  if (savedTrack === undefined) delete process.env.HASHLINE_TRACK_SAVINGS;
+  else process.env.HASHLINE_TRACK_SAVINGS = savedTrack;
+});
 
 describe("hashlineRead (R1)", () => {
   test("emits [PATH#TAG] header and LINE:TEXT rows", async () => {
