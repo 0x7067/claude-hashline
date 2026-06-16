@@ -114,10 +114,13 @@ edits are confined strictly to the workspace.
 
 ## Token savings tracker
 
-Every hashline edit replaces a full-file `Write`: a `Write` would have re-emitted
-the entire post-edit file, while hashline only emits the small patch the model
-typed. The plugin records that difference per edit into a per-project,
-append-only ledger so you can see the running total.
+A hashline edit avoids reproducing text a built-in edit would have emitted. The
+honest alternative is `str_replace` — the old text plus the new text the model
+would otherwise type — so the saving is the `old_string` you don't have to repeat,
+not a whole-file `Write`. The plugin records that difference per edit into a
+per-project, append-only ledger so you can see the running total. Large edits save
+most; a tiny one-line edit can net ~zero, since the `[path#tag]` header and op line
+are real output too.
 
 ```bash
 bun run src/savings.ts            # rollup for the current project
@@ -130,6 +133,10 @@ bun run src/savings.ts            # rollup for the current project
   `<configDir>/hashline-savings/` (`CLAUDE_CONFIG_DIR`, default `~/.claude`;
   override with `HASHLINE_SAVINGS_DIR`). It lives outside your repo, so it never
   pollutes the tree. Writes are non-fatal — a ledger failure never breaks an edit.
+- **Calibrated to the benchmark.** Measuring against `str_replace` keeps the total
+  near the benchmark's real-world 9–21% range. Rows written before this baseline
+  change are reported separately as legacy — they used an inflated full-`Write`
+  baseline and can't be recomputed.
 - **Estimates only.** Token counts use a `chars/4` heuristic. Anthropic ships no
   exact local tokenizer for current Claude models (the tokenizer changed with
   Opus 4.7), and the only ground truth — the `count_tokens` API or real-call
