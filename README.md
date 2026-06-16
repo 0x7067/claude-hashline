@@ -85,8 +85,8 @@ repo contents can't spoof, use `~/.hashline-off` or `HASHLINE_DISABLED`.
 ## Jail carve-outs
 
 The jailed filesystem normally confines every `read`/`edit`/`search` to the
-workspace root (cwd or `HASHLINE_ROOT`). Two opt-in, additive carve-outs widen
-it (both default-on in the published plugin, default-off in the library):
+workspace root (cwd or `HASHLINE_ROOT`). Three opt-in, additive carve-outs widen
+it (all default-on in the published plugin, default-off in the library):
 
 - **`HASHLINE_ALLOW_MEMORY=1`** — also allow any Claude Code per-project memory
   dir, `<configDir>/projects/<project>/memory/` and below, so the model can read
@@ -99,8 +99,17 @@ it (both default-on in the published plugin, default-off in the library):
   e.g. `/tmp` or macOS `/var/folders/...`) and below, for staging scratch files
   such as a PR body fed to `gh pr create --body-file`. The temp dir is
   ephemeral, world-writable scratch space, so the widening is bounded.
+- **`HASHLINE_ALLOW_PATHS=dir1:dir2`** — also allow any path under each listed
+  root (`path.delimiter`-separated, a leading `~/` expanded), e.g. a sibling
+  repo or `~/.config`. The published plugin sets this to `~/.claude:~/.agents:~/.codex`
+  so the model can edit its own agent config/skills. Roots are operator-supplied
+  in the MCP env — unlike `.hashline-off`, repo contents can't inject one.
+  **Note:** allowing all of `~/.claude` includes `settings.json` (whose hooks run
+  shell commands), so a prompt-injected diff could reach it; the narrower
+  `HASHLINE_ALLOW_MEMORY` exists precisely to avoid that. Trim the list if you
+  don't need the whole tree.
 
-Set either flag to `0` (or unset it) to drop that carve-out; with both off,
+Set a flag to `0`/unset (or empty `HASHLINE_ALLOW_PATHS`) to drop that carve-out;
 edits are confined strictly to the workspace.
 
 ## Token savings tracker

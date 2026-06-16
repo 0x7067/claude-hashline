@@ -36,7 +36,7 @@ export class PathEscapeError extends Error {
   constructor(requested: string, resolved: string, root: string) {
     super(
       `Path '${requested}' resolves to '${resolved}', which is outside the workspace root '${root}'. ` +
-        `hashline edits are confined to the workspace (plus any enabled carve-outs: the Claude memory dir, the system temp dir).`,
+        `hashline edits are confined to the workspace (plus any enabled carve-outs: the Claude memory dir, the system temp dir, and HASHLINE_ALLOW_PATHS roots).`,
     );
     this.name = "PathEscapeError";
   }

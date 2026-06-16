@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import * as path from "node:path";
-import { claudeMemoryMatcher, createContext, hashlineEdit, hashlineRead, hashlineSearch, type HashlineContext, normalizeColonRanges, systemTempMatcher } from "../src/core.ts";
+import { claudeMemoryMatcher, createContext, explicitPathsMatcher, hashlineEdit, hashlineRead, hashlineSearch, type HashlineContext, normalizeColonRanges, systemTempMatcher } from "../src/core.ts";
 import { JailedFilesystem } from "../src/jailed-fs.ts";
 
 let root: string;
@@ -304,6 +304,54 @@ describe("system temp-dir carve-out (HASHLINE_ALLOW_TMP)", () => {
     expect(match(path.join(base, "scratch.md"))).toBe(true);
     expect(match(path.join(base, "a", "b", "c.md"))).toBe(true);
     expect(match("/etc/passwd")).toBe(false);
+  });
+});
+
+describe("explicit-paths carve-out (HASHLINE_ALLOW_PATHS)", () => {
+  // `root` lives under tmpdir; target a sibling dir OUTSIDE root and allow it
+  // explicitly, proving the list carve-out (not the workspace root) permits it.
+  let sibling: string;
+  let savedAllow: string | undefined;
+
+  beforeEach(() => {
+    savedAllow = process.env.HASHLINE_ALLOW_PATHS;
+    sibling = mkdtempSync(path.join(tmpdir(), "hashline-allow-"));
+  });
+  afterEach(() => {
+    rmSync(sibling, { recursive: true, force: true });
+    if (savedAllow === undefined) delete process.env.HASHLINE_ALLOW_PATHS;
+    else process.env.HASHLINE_ALLOW_PATHS = savedAllow;
+  });
+
+  test("listed root: read + create + edit succeed outside the workspace", async () => {
+    process.env.HASHLINE_ALLOW_PATHS = sibling;
+    const c = createContext(root);
+    const f = path.join(sibling, "config.toml");
+    const created = await hashlineEdit(c, `[${f}]\ninsert head:\n+a = 1`);
+    expect(created.isError).toBe(false);
+    const out = await hashlineRead(c, { path: f });
+    const res = await hashlineEdit(c, `[${f}#${tagFrom(out)}]\nreplace 1..1:\n+a = 2`);
+    expect(res.isError).toBe(false);
+    expect(readFileSync(f, "utf8")).toContain("a = 2");
+  });
+
+  test("unset: a path outside the root is rejected", async () => {
+    delete process.env.HASHLINE_ALLOW_PATHS;
+    const c = createContext(root);
+    const f = path.join(sibling, "config.toml");
+    writeFileSync(f, "x\n");
+    await expect(hashlineRead(c, { path: f })).rejects.toThrow(/outside the workspace/);
+  });
+
+  test("explicitPathsMatcher: accepts listed roots (incl. ~/ expansion), rejects elsewhere", () => {
+    process.env.HASHLINE_ALLOW_PATHS = `${sibling}${path.delimiter}~/.agents`;
+    const match = explicitPathsMatcher()!;
+    const base = realpathSync(sibling);
+    expect(match(path.join(base, "x.md"))).toBe(true);
+    expect(match(path.join(realpathSync(homedir()), ".agents", "skills", "s.md"))).toBe(true);
+    expect(match("/etc/passwd")).toBe(false);
+    delete process.env.HASHLINE_ALLOW_PATHS;
+    expect(explicitPathsMatcher()).toBeUndefined();
   });
 });
 

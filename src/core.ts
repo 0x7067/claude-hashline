@@ -72,13 +72,37 @@ export function systemTempMatcher(): (resolved: string) => boolean {
   return (resolved: string): boolean => resolved === tmpBase || resolved.startsWith(tmpBase + path.sep);
 }
 
+/**
+ * Build a predicate permitting paths under any root listed in
+ * `HASHLINE_ALLOW_PATHS` — a `path.delimiter`-separated list of absolute dirs
+ * (a leading `~/` is expanded), e.g. a sibling repo or `~/.config`. Each entry
+ * is canonicalized so the prefix check compares real paths (same symlink-safety
+ * as the jail root). Operator-supplied and explicit — unlike `.hashline-off`,
+ * repo contents can't inject a root. Empty/unset → undefined (no carve-out).
+ * Exported for direct unit testing.
+ */
+export function explicitPathsMatcher(): ((resolved: string) => boolean) | undefined {
+  const raw = process.env.HASHLINE_ALLOW_PATHS;
+  if (!raw || !raw.trim()) return undefined;
+  const roots = raw
+    .split(path.delimiter)
+    .map(s => s.trim())
+    .filter(Boolean)
+    .map(p => canonicalize(path.resolve(p.startsWith("~/") ? path.join(os.homedir(), p.slice(2)) : p)));
+  if (!roots.length) return undefined;
+  return (resolved: string): boolean => roots.some(r => resolved === r || resolved.startsWith(r + path.sep));
+}
+
 /** Build a fresh context rooted at `root` (defaults to HASHLINE_ROOT or cwd). */
 export function createContext(root: string = process.env.HASHLINE_ROOT ?? process.cwd()): HashlineContext {
   // Opt-in, additive carve-outs (each OR'd onto the in-root check): the Claude
-  // memory dir (HASHLINE_ALLOW_MEMORY) and the system temp dir (HASHLINE_ALLOW_TMP).
+  // memory dir (HASHLINE_ALLOW_MEMORY), the system temp dir (HASHLINE_ALLOW_TMP),
+  // and an explicit operator-supplied root list (HASHLINE_ALLOW_PATHS).
   const allows: Array<(resolved: string) => boolean> = [];
   if (envEnabled(process.env.HASHLINE_ALLOW_MEMORY)) allows.push(claudeMemoryMatcher());
   if (envEnabled(process.env.HASHLINE_ALLOW_TMP)) allows.push(systemTempMatcher());
+  const explicit = explicitPathsMatcher();
+  if (explicit) allows.push(explicit);
   const extraAllow = allows.length ? (resolved: string) => allows.some(fn => fn(resolved)) : undefined;
   const fs = new JailedFilesystem(root, extraAllow);
   const snapshots = new InMemorySnapshotStore();

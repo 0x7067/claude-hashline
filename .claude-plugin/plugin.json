@@ -12,7 +12,7 @@
     "hashline": {
       "command": "bun",
       "args": ["run", "${CLAUDE_PLUGIN_ROOT}/src/server.ts"],
-      "env": { "HASHLINE_ALLOW_MEMORY": "1", "HASHLINE_ALLOW_TMP": "1" }
+      "env": { "HASHLINE_ALLOW_MEMORY": "1", "HASHLINE_ALLOW_TMP": "1", "HASHLINE_ALLOW_PATHS": "~/.claude:~/.agents:~/.codex" }
     }
   }
 }
