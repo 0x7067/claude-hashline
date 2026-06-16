@@ -10,6 +10,7 @@ import {
   readRollup,
   recordEditSaving,
   trackingEnabled,
+  strReplaceTokens,
 } from "../src/savings.ts";
 
 let root: string;
@@ -61,60 +62,106 @@ describe("trackingEnabled", () => {
   });
 });
 
-describe("recordEditSaving + readRollup", () => {
-  test("appends a row and sums across calls", () => {
-    const after = "x".repeat(400); // ~100 est tokens
-    const input = "[a#ABCD]\nreplace 1:\n+x"; // tiny patch
-    const s1 = recordEditSaving(root, input, [after]);
-    expect(s1).not.toBeNull();
-    expect(s1!.fullWriteTokens).toBe(100);
-    expect(s1!.savedTokens).toBe(100 - estimateTokens(input));
+describe("strReplaceTokens (str_replace counterfactual)", () => {
+  test("AE1: small replace in a big file ~ changed region, not the whole file", () => {
+    const before = Array.from({ length: 200 }, (_, i) => `line ${i}`).join("\n");
+    const after = before.replace("line 5", "line FIVE changed");
+    const t = strReplaceTokens(before, after);
+    expect(t).toBeGreaterThan(0);
+    expect(t).toBeLessThan(estimateTokens(after) / 4); // tiny vs the whole file
+  });
+  test("AE2: pure insert -> old side empty, cost ~ inserted text only", () => {
+    expect(strReplaceTokens("a\nb\nc", "a\nNEW\nb\nc")).toBe(estimateTokens("NEW"));
+  });
+  test("AE3: pure delete -> cost ~ deleted text", () => {
+    expect(strReplaceTokens("a\nDEL1\nDEL2\nb", "a\nb")).toBe(estimateTokens("DEL1\nDEL2"));
+  });
+  test("create (before empty) -> cost ~ whole new body", () => {
+    expect(strReplaceTokens("", "x\ny\nz")).toBe(estimateTokens("x\ny\nz"));
+  });
+  test("identical before/after -> 0", () => {
+    expect(strReplaceTokens("a\nb", "a\nb")).toBe(0);
+  });
+});
 
-    recordEditSaving(root, input, [after]);
+describe("recordEditSaving + readRollup", () => {
+  test("appends a v2 row and sums across calls", () => {
+    const before = "keep\n" + "old".repeat(50); // 2 lines, 2nd is large
+    const after = "keep\nnew content here";
+    const input = "[a#ABCD]\nreplace 2:\n+new content here";
+    const s1 = recordEditSaving(root, input, [{ before, after }]);
+    expect(s1).not.toBeNull();
+    expect(s1!.baselineTokens).toBe(strReplaceTokens(before, after));
+    expect(s1!.savedTokens).toBe(s1!.baselineTokens - estimateTokens(input));
+
+    recordEditSaving(root, input, [{ before, after }]);
     const r = readRollup(root);
-    expect(r.edits).toBe(2);
-    expect(r.fullWriteTokens).toBe(200);
-    expect(r.savedTokens).toBe(2 * s1!.savedTokens);
+    expect(r.current.edits).toBe(2);
+    expect(r.legacy.edits).toBe(0);
+    expect(r.current.savedTokens).toBe(2 * s1!.savedTokens);
     expect(existsSync(ledgerPathFor(root))).toBe(true);
+  });
+
+  test("legacy v1 rows are read under the legacy baseline, separate from v2", () => {
+    const file = ledgerPathFor(root);
+    writeFileSync(file, JSON.stringify({ v: 1, ts: 1, sections: 1, fullWriteTokens: 1000, patchTokens: 50, savedTokens: 950 }) + "\n");
+    // A large old_string is the win case: hashline skips reproducing it, str_replace can't.
+    recordEditSaving(root, "[a#ABCD]\nreplace 1:\n+yy", [{ before: "x".repeat(400) + "\nbbbb", after: "yy\nbbbb" }]);
+    const r = readRollup(root);
+    expect(r.legacy.edits).toBe(1);
+    expect(r.legacy.savedTokens).toBe(950);
+    expect(r.current.edits).toBe(1);
+    expect(r.current.savedTokens).toBeGreaterThan(0);
   });
 
   test("disabled tracking writes nothing", () => {
     process.env.HASHLINE_TRACK_SAVINGS = "0";
-    expect(recordEditSaving(root, "p", ["after"])).toBeNull();
-    expect(readRollup(root)).toEqual({ edits: 0, fullWriteTokens: 0, patchTokens: 0, savedTokens: 0 });
+    expect(recordEditSaving(root, "p", [{ before: "a", after: "b" }])).toBeNull();
+    const r = readRollup(root);
+    expect(r.current.edits).toBe(0);
+    expect(r.legacy.edits).toBe(0);
   });
 
-  test("empty afters (all-noop) records nothing", () => {
+  test("empty sections (all-noop) records nothing", () => {
     expect(recordEditSaving(root, "p", [])).toBeNull();
-    expect(readRollup(root).edits).toBe(0);
+    expect(readRollup(root).current.edits).toBe(0);
   });
 
   test("malformed ledger lines are skipped, not fatal", () => {
-    recordEditSaving(root, "[a#ABCD]\nr", ["x".repeat(400)]);
+    recordEditSaving(root, "[a#ABCD]\nr", [{ before: "xxxx\nyyyy", after: "zz\nyyyy" }]);
     const file = ledgerPathFor(root);
     writeFileSync(file, readFileSync(file, "utf8") + "not-json\n");
-    expect(readRollup(root).edits).toBe(1);
+    expect(readRollup(root).current.edits).toBe(1);
   });
 });
 
 describe("formatRollup", () => {
-  test("labels the number as an estimate", () => {
-    const out = formatRollup(root, { edits: 3, fullWriteTokens: 1000, patchTokens: 200, savedTokens: 800 });
-    expect(out).toContain("estimated");
+  const current = { edits: 3, baselineTokens: 1000, patchTokens: 200, savedTokens: 800 };
+  test("labels estimate, str_replace baseline, and benchmark calibration", () => {
+    const out = formatRollup(root, { current, legacy: { edits: 0, baselineTokens: 0, patchTokens: 0, savedTokens: 0 } });
     expect(out.toLowerCase()).toContain("estimate only");
-    expect(out).toContain("80%");
+    expect(out).toContain("str_replace");
+    expect(out).toContain("9-21%");
+    expect(out).toContain("80%"); // current pct
+    expect(out.toLowerCase()).not.toContain("legacy");
+  });
+  test("renders a labeled legacy line only when legacy rows exist", () => {
+    const out = formatRollup(root, { current, legacy: { edits: 8, baselineTokens: 33000, patchTokens: 1600, savedTokens: 31400 } });
+    expect(out.toLowerCase()).toContain("legacy");
+    expect(out.toLowerCase()).toContain("full-write");
   });
 });
 
 describe("integration through hashlineEdit", () => {
-  test("a real edit records a positive saving", async () => {
+  test("a large edit records a positive saving (skips a big old_string)", async () => {
     const ctx = createContext(root);
     writeFileSync(path.join(root, "big.ts"), Array.from({ length: 40 }, (_, i) => `const v${i} = ${i};`).join("\n") + "\n");
     const tag = tagFrom(await hashlineRead(ctx, { path: "big.ts" }));
-    const res = await hashlineEdit(ctx, `[big.ts#${tag}]\nreplace 1:\n+const v0 = 999;`);
+    // Delete 38 lines: hashline emits a tiny `delete`, str_replace would emit all 38 as old_string.
+    const res = await hashlineEdit(ctx, `[big.ts#${tag}]\ndelete 2..39`);
     expect(res.isError).toBe(false);
     const r = readRollup(root);
-    expect(r.edits).toBe(1);
-    expect(r.savedTokens).toBeGreaterThan(0); // small patch replaced a whole-file write
+    expect(r.current.edits).toBe(1);
+    expect(r.current.savedTokens).toBeGreaterThan(0);
   });
 });

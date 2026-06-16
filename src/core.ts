@@ -386,8 +386,8 @@ export async function hashlineEdit(ctx: HashlineContext, input: string): Promise
         return `${s.header} (${s.op})${window}`;
       })
       .join("\n\n");
-    // Track output tokens saved vs the full-file Write this edit replaced.
-    recordEditSaving(ctx.root, input, result.sections.filter(s => s.op !== "noop").map(s => s.after));
+    // Track output tokens saved vs the str_replace a built-in edit would have emitted.
+    recordEditSaving(ctx.root, input, result.sections.filter(s => s.op !== "noop").map(s => ({ before: s.before, after: s.after })));
     return { text: blocks, isError: false };
   } catch (err) {
     return { text: errMessage(err), isError: true };
@@ -444,8 +444,8 @@ async function handleCreates(ctx: HashlineContext, sections: CreateSection[], in
     void computeFileHash; // hash already via record()
     headers.push(`${formatHashlineHeader(s.path, hash)} (create)`);
   }
-  // A create emits the full body either way, so savings are ~0; record for parity.
-  recordEditSaving(ctx.root, input, contents);
+  // A create emits the full body either way (str_replace can't create), so savings are ~0.
+  recordEditSaving(ctx.root, input, contents.map(c => ({ before: "", after: c })));
   return { text: headers.join("\n"), isError: false };
 }
 

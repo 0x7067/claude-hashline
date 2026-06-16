@@ -61,39 +61,75 @@ export function ledgerPathFor(root: string): string {
 export interface EditSaving {
   /** Number of changed (non-noop) sections in the edit call. */
   sections: number;
-  /** est tokens for the full-file Write counterfactual (sum of changed `after`). */
-  fullWriteTokens: number;
-  /** est tokens the hashline patch actually emitted (the whole `input`). */
+  /** est tokens for the str_replace counterfactual (sum of changed old+new text). */
+  baselineTokens: number;
+  /**
+   * est tokens hashline actually emitted: the whole `input` the model typed,
+   * INCLUDING the `[path#tag]` header and op lines. That framing is real output,
+   * so a tiny edit can net ~0 or slightly negative — the win concentrates in
+   * large edits where str_replace would have to reproduce a big `old_string`.
+   */
   patchTokens: number;
-  /** fullWriteTokens - patchTokens (<= 0 for creates / whole-file rewrites). */
+  /** baselineTokens - patchTokens (can be <= 0 for tiny edits and for creates). */
   savedTokens: number;
 }
 
+/** Pre/post text of one changed section, as exposed by the patch engine's result. */
+export interface ChangedSection {
+  before: string;
+  after: string;
+}
+
+/**
+ * Estimate what `str_replace` would have emitted for one section: `old_string`
+ * plus `new_string`. The realistic built-in alternative to a hashline edit is a
+ * str_replace, not a full-file Write, so the counterfactual is the changed
+ * region on each side — isolated by trimming the common leading/trailing lines
+ * of `before` vs `after`. Contiguous and dependency-free, which suffices because
+ * hashline ops target contiguous ranges. A multi-hunk edit collapses to the one
+ * span covering all hunks, slightly overcounting — directional, acceptable, and
+ * cheaper than pulling in a real diff. A create (`before === ""`) yields the
+ * whole body, matching str_replace's only create-counterfactual (a Write).
+ */
+export function strReplaceTokens(before: string, after: string): number {
+  const b = before.split("\n");
+  const a = after.split("\n");
+  let p = 0;
+  while (p < b.length && p < a.length && b[p] === a[p]) p++;
+  let s = 0;
+  while (s < b.length - p && s < a.length - p && b[b.length - 1 - s] === a[a.length - 1 - s]) s++;
+  const oldChanged = b.slice(p, b.length - s).join("\n");
+  const newChanged = a.slice(p, a.length - s).join("\n");
+  return estimateTokens(oldChanged) + estimateTokens(newChanged);
+}
+
 interface LedgerRow extends EditSaving {
-  v: 1;
+  v: 2;
   ts: number;
 }
 
 /**
  * Append one edit call's saving to the project ledger. NEVER throws: tracking is
  * a side metric and must not break an edit. Returns the computed saving, or null
- * when tracking is disabled or nothing changed. `afters` is the post-edit text
- * of each changed section; `input` is the raw patch the model emitted.
+ * when tracking is disabled or nothing changed. `sections` carries the pre/post
+ * text of each changed section (from the patch result); `input` is the raw patch
+ * the model emitted. The saving is measured against the str_replace
+ * counterfactual, NOT a full-file Write.
  */
-export function recordEditSaving(root: string, input: string, afters: string[]): EditSaving | null {
-  if (!trackingEnabled() || afters.length === 0) return null;
-  const fullWriteTokens = afters.reduce((sum, a) => sum + estimateTokens(a), 0);
+export function recordEditSaving(root: string, input: string, sections: ChangedSection[]): EditSaving | null {
+  if (!trackingEnabled() || sections.length === 0) return null;
+  const baselineTokens = sections.reduce((sum, s) => sum + strReplaceTokens(s.before, s.after), 0);
   const patchTokens = estimateTokens(input);
   const saving: EditSaving = {
-    sections: afters.length,
-    fullWriteTokens,
+    sections: sections.length,
+    baselineTokens,
     patchTokens,
-    savedTokens: fullWriteTokens - patchTokens,
+    savedTokens: baselineTokens - patchTokens,
   };
   try {
     const file = ledgerPathFor(root);
     mkdirSync(path.dirname(file), { recursive: true });
-    const row: LedgerRow = { v: 1, ts: Date.now(), ...saving };
+    const row: LedgerRow = { v: 2, ts: Date.now(), ...saving };
     // O_APPEND keeps tiny JSON lines atomic across concurrent session processes.
     appendFileSync(file, JSON.stringify(row) + "\n");
   } catch {
@@ -102,50 +138,83 @@ export function recordEditSaving(root: string, input: string, afters: string[]):
   return saving;
 }
 
-export interface Rollup {
+/** One baseline's accumulated totals. */
+export interface RollupAcc {
   edits: number;
-  fullWriteTokens: number;
+  baselineTokens: number;
   patchTokens: number;
   savedTokens: number;
 }
 
+/**
+ * The project ledger summed and split by baseline. `current` holds v2 rows (the
+ * honest str_replace baseline); `legacy` holds v1 rows (the old, inflated
+ * full-Write baseline). v1 rows stored only counts and no before-text, so they
+ * cannot be recomputed — they are reported separately and never folded into the
+ * current total.
+ */
+export interface Rollup {
+  current: RollupAcc;
+  legacy: RollupAcc;
+}
+
+function emptyAcc(): RollupAcc {
+  return { edits: 0, baselineTokens: 0, patchTokens: 0, savedTokens: 0 };
+}
+
 /** Sum the project ledger. Missing/empty ledger -> all zeros; bad lines skipped. */
 export function readRollup(root: string): Rollup {
-  const acc: Rollup = { edits: 0, fullWriteTokens: 0, patchTokens: 0, savedTokens: 0 };
+  const rollup: Rollup = { current: emptyAcc(), legacy: emptyAcc() };
   let text: string;
   try {
     text = readFileSync(ledgerPathFor(root), "utf8");
   } catch {
-    return acc;
+    return rollup;
   }
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
     try {
-      const row = JSON.parse(line) as Partial<LedgerRow>;
+      const row = JSON.parse(line) as Record<string, unknown>;
       if (typeof row.savedTokens !== "number") continue;
+      const acc = row.v === 2 ? rollup.current : rollup.legacy;
+      // v2 rows carry baselineTokens; legacy v1 rows carry fullWriteTokens.
+      const baseline =
+        typeof row.baselineTokens === "number" ? row.baselineTokens
+        : typeof row.fullWriteTokens === "number" ? row.fullWriteTokens
+        : 0;
       acc.edits += 1;
-      acc.fullWriteTokens += row.fullWriteTokens ?? 0;
-      acc.patchTokens += row.patchTokens ?? 0;
+      acc.baselineTokens += baseline;
+      acc.patchTokens += typeof row.patchTokens === "number" ? row.patchTokens : 0;
       acc.savedTokens += row.savedTokens;
     } catch {
       // Skip a malformed line rather than abort the whole rollup.
     }
   }
-  return acc;
+  return rollup;
 }
 
 /** Human-readable summary for the CLI / slash command. */
 export function formatRollup(root: string, r: Rollup): string {
-  const pct = r.fullWriteTokens > 0 ? (r.savedTokens / r.fullWriteTokens) * 100 : 0;
   const n = (x: number) => Math.round(x).toLocaleString("en-US");
-  return [
+  const cur = r.current;
+  const pct = cur.baselineTokens > 0 ? (cur.savedTokens / cur.baselineTokens) * 100 : 0;
+  const lines = [
     `Hashline token savings (estimated, chars/4) -- ${root}`,
-    `  Edits tracked:     ${n(r.edits)}`,
-    `  Full-write tokens: ${n(r.fullWriteTokens)}  (what Write would have emitted)`,
-    `  Hashline tokens:   ${n(r.patchTokens)}  (what hashline actually emitted)`,
-    `  Estimated saved:   ${n(r.savedTokens)}  (~${pct.toFixed(0)}% fewer output tokens)`,
+    `  Edits tracked:     ${n(cur.edits)}`,
+    `  str_replace cost:  ${n(cur.baselineTokens)}  (what the built-in editor would have emitted)`,
+    `  Hashline cost:     ${n(cur.patchTokens)}  (what hashline actually emitted)`,
+    `  Estimated saved:   ${n(cur.savedTokens)}  (~${pct.toFixed(0)}% fewer output tokens)`,
+  ];
+  if (r.legacy.edits > 0) {
+    lines.push(
+      `  Legacy rows:       ${n(r.legacy.edits)} edit(s), ${n(r.legacy.savedTokens)} "saved" on the old full-Write baseline -- inflated and not comparable; excluded from the total above.`,
+    );
+  }
+  lines.push(
+    `Benchmark-calibrated: hashline's measured real-world savings are 9-21% (docs/benchmark/analysis.md); a far larger figure means the baseline is wrong.`,
     `Estimate only -- Claude has no exact local tokenizer; treat as directional.`,
-  ].join("\n");
+  );
+  return lines.join("\n");
 }
 
 // CLI entry: `bun run src/savings.ts [root]` prints the current project rollup.
