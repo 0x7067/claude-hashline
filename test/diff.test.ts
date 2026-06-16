@@ -15,7 +15,7 @@ function previewRowsMatchAfter(
   after: string,
   contextLines?: number,
 ): void {
-  const { diff } = generateDiffString(before, after, contextLines);
+  const diff = generateDiffString(before, after, contextLines);
   const preview = buildCompactDiffPreview(diff).preview;
   const afterLines = after.split("\n");
   for (const row of preview.split("\n")) {
@@ -133,15 +133,4 @@ describe("generateDiffString -> buildCompactDiffPreview line anchoring", () => {
     previewRowsMatchAfter("a\nb\nc", "a\nB\nc", 2));
   test("empty before (file creation)", () =>
     previewRowsMatchAfter("", "x\ny\nz", 2));
-});
-
-describe("generateDiffString.firstChangedLine", () => {
-  test("points at the first changed NEW-file line", () => {
-    const before = lines("one", "two", "three");
-    const after = lines("one", "TWO", "three");
-    expect(generateDiffString(before, after).firstChangedLine).toBe(2);
-  });
-  test("undefined when identical", () => {
-    expect(generateDiffString("a\nb", "a\nb").firstChangedLine).toBeUndefined();
-  });
 });

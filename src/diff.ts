@@ -1,30 +1,25 @@
 import * as Diff from "diff";
 
-export interface DiffResult {
-  diff: string;
-  firstChangedLine: number | undefined;
-}
-
 function formatNumberedDiffLine(prefix: "+" | "-" | " ", lineNum: number, content: string): string {
   return `${prefix}${lineNum}|${content}`;
 }
 
 /**
- * Generate a unified diff string with line numbers and context.
- * Returns both the diff string and the first changed line number (in the new file).
+ * Generate a numbered diff in the `<sign><lineNum>|<content>` shape that
+ * `buildCompactDiffPreview` consumes: `+` lines carry the post-edit number, `-`
+ * lines the pre-edit number, context lines the pre-edit number. Unchanged
+ * regions adjacent to a change are trimmed to `contextLines` per side — the
+ * package only elides long *added* runs, not context, so the producer must cap
+ * context itself or the whole unchanged file floods the preview. The elided
+ * middle of a between-changes block is dropped (line numbers jump across it).
  */
-export function generateDiffString(
-  oldContent: string,
-  newContent: string,
-  contextLines = 2,
-): DiffResult {
+export function generateDiffString(oldContent: string, newContent: string, contextLines = 2): string {
   const parts = Diff.diffLines(oldContent, newContent);
   const output: string[] = [];
 
   let oldLineNum = 1;
   let newLineNum = 1;
   let lastWasChange = false;
-  let firstChangedLine: number | undefined;
 
   for (let i = 0; i < parts.length; i++) {
     const part = parts[i];
@@ -34,10 +29,6 @@ export function generateDiffString(
     }
 
     if (part.added || part.removed) {
-      if (firstChangedLine === undefined) {
-        firstChangedLine = newLineNum;
-      }
-
       for (const line of raw) {
         if (part.added) {
           output.push(formatNumberedDiffLine("+", newLineNum, line));
@@ -53,31 +44,27 @@ export function generateDiffString(
 
       if (lastWasChange || nextPartIsChange) {
         const contextLimit = Math.max(0, contextLines);
-        let leadingSkip = 0;
         let middleSkip = 0;
-        let trailingSkip = 0;
         let linesToShow: string[];
 
         if (lastWasChange && nextPartIsChange) {
+          // Context sandwiched between two changes: keep both edges, drop the middle.
           if (raw.length > contextLimit * 2) {
-            const leadingContext = raw.slice(0, contextLimit);
-            const trailingContext = raw.slice(raw.length - contextLimit);
-            middleSkip = raw.length - leadingContext.length - trailingContext.length;
-            linesToShow = [...leadingContext, ...trailingContext];
+            middleSkip = raw.length - contextLimit * 2;
+            linesToShow = [...raw.slice(0, contextLimit), ...raw.slice(raw.length - contextLimit)];
           } else {
             linesToShow = raw;
           }
         } else if (nextPartIsChange) {
-          leadingSkip = Math.max(0, raw.length - contextLimit);
-          linesToShow = raw.slice(leadingSkip);
+          // Leading context before a change: keep the tail, skip past the head.
+          const skip = Math.max(0, raw.length - contextLimit);
+          oldLineNum += skip;
+          newLineNum += skip;
+          linesToShow = raw.slice(skip);
         } else {
-          trailingSkip = Math.max(0, raw.length - contextLimit);
+          // Trailing context after the final change: keep the head. diffLines never
+          // emits a change after this block, so the unshown tail needs no counting.
           linesToShow = raw.slice(0, contextLimit);
-        }
-
-        if (leadingSkip > 0) {
-          oldLineNum += leadingSkip;
-          newLineNum += leadingSkip;
         }
 
         const firstChunkLength = middleSkip > 0 ? contextLimit : linesToShow.length;
@@ -96,11 +83,6 @@ export function generateDiffString(
             newLineNum++;
           }
         }
-
-        if (trailingSkip > 0) {
-          oldLineNum += trailingSkip;
-          newLineNum += trailingSkip;
-        }
       } else {
         oldLineNum += raw.length;
         newLineNum += raw.length;
@@ -110,5 +92,5 @@ export function generateDiffString(
     }
   }
 
-  return { diff: output.join("\n"), firstChangedLine };
+  return output.join("\n");
 }

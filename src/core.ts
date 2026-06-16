@@ -372,15 +372,20 @@ export async function hashlineEdit(ctx: HashlineContext, input: string): Promise
         if (s.op === "noop") return `${s.header} (no change)`;
 
         const diff = generateDiffString(s.before, s.after);
-        const preview = buildCompactDiffPreview(diff.diff);
+        const preview = buildCompactDiffPreview(diff);
 
         const warningsBlock = s.warnings.length > 0 ? `\n\nWarnings:\n${s.warnings.join("\n")}` : "";
         const previewBlock = preview.preview ? `\n${preview.preview}` : "";
         const blockBlock = s.blockResolutions && s.blockResolutions.length > 0
           ? `\n${s.blockResolutions.map(formatBlockResolution).join("\n")}`
           : "";
+        // The preview only shows context around the change; if the file is larger,
+        // tell the model so it re-reads before anchoring a follow-up edit far away.
+        const totalLines = s.after.split("\n").length;
+        const shownLines = preview.preview ? preview.preview.split("\n").filter(l => /^\d+:/.test(l)).length : 0;
+        const overflowBlock = totalLines > shownLines ? `\n... ${totalLines} lines total; re-read with offset for regions outside this preview` : "";
 
-        return `${s.header} (${s.op})${blockBlock}${previewBlock}${warningsBlock}`;
+        return `${s.header} (${s.op})${blockBlock}${previewBlock}${overflowBlock}${warningsBlock}`;
       })
       .join("\n\n");
     // Track output tokens saved vs the str_replace a built-in edit would have emitted.
