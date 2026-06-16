@@ -133,6 +133,19 @@ describe("edit-result window enables chaining (R1, R2)", () => {
     expect(r.text).toContain("no change");
     expect(r.text).toMatch(/^\[a\.ts#[0-9A-F]{4}\]/);
   });
+
+  test("overflow hint fires only when the preview omits part of the file", async () => {
+    // Whole file fits the window -> no hint (trailing newline must not inflate the count).
+    writeFileSync(path.join(root, "small.ts"), "one\ntwo\nthree\n");
+    const t1 = tagFrom(await hashlineRead(ctx, { path: "small.ts" }));
+    const small = await hashlineEdit(ctx, `[small.ts#${t1}]\nreplace 2..2:\n+TWO`);
+    expect(small.text).not.toContain("lines total");
+    // A change in a larger file shows only context -> hint points the model to re-read.
+    writeFileSync(path.join(root, "big.ts"), Array.from({ length: 30 }, (_, i) => `line${i + 1}`).join("\n") + "\n");
+    const t2 = tagFrom(await hashlineRead(ctx, { path: "big.ts" }));
+    const big = await hashlineEdit(ctx, `[big.ts#${t2}]\nreplace 15..15:\n+CHANGED`);
+    expect(big.text).toContain("30 lines total");
+  });
 });
 
 describe("hashlineEdit ops (R3)", () => {

@@ -381,7 +381,10 @@ export async function hashlineEdit(ctx: HashlineContext, input: string): Promise
           : "";
         // The preview only shows context around the change; if the file is larger,
         // tell the model so it re-reads before anchoring a follow-up edit far away.
-        const totalLines = s.after.split("\n").length;
+        const afterLines = s.after.split("\n");
+        // A trailing newline yields a final empty element that is never a preview
+        // row; drop it so a fully-shown file doesn't spuriously trip the hint.
+        const totalLines = afterLines[afterLines.length - 1] === "" ? afterLines.length - 1 : afterLines.length;
         const shownLines = preview.preview ? preview.preview.split("\n").filter(l => /^\d+:/.test(l)).length : 0;
         const overflowBlock = totalLines > shownLines ? `\n... ${totalLines} lines total; re-read with offset for regions outside this preview` : "";
 
