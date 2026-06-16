@@ -307,7 +307,7 @@ export function normalizeColonRanges(input: string): string {
  * Format a block resolution message for output.
  */
 function formatBlockResolution(resolution: BlockResolution): string {
-  return `[Resolved block N to lines ${resolution.start}..${resolution.end}]`;
+  return `[Resolved block ${resolution.anchorLine} to lines ${resolution.start}..${resolution.end}]`;
 }
 
 /**
@@ -370,16 +370,16 @@ export async function hashlineEdit(ctx: HashlineContext, input: string): Promise
     const blocks = result.sections
       .map(s => {
         if (s.op === "noop") return `${s.header} (no change)`;
-        
+
         const diff = generateDiffString(s.before, s.after);
         const preview = buildCompactDiffPreview(diff.diff);
-        
+
         const warningsBlock = s.warnings.length > 0 ? `\n\nWarnings:\n${s.warnings.join("\n")}` : "";
         const previewBlock = preview.preview ? `\n${preview.preview}` : "";
         const blockBlock = s.blockResolutions && s.blockResolutions.length > 0
           ? `\n${s.blockResolutions.map(formatBlockResolution).join("\n")}`
           : "";
-          
+
         return `${s.header} (${s.op})${blockBlock}${previewBlock}${warningsBlock}`;
       })
       .join("\n\n");
