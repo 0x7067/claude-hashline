@@ -1,9 +1,9 @@
 /**
- * Hashline MCP server. Exposes `read` and `edit` over stdio so Claude Code
- * routes editing through the line-anchored hashline patch language while the
+ * Hashline MCP server. Exposes `read`, `search`, and `edit` over stdio so Claude
+ * Code routes editing through the line-anchored hashline patch language while the
  * PreToolUse hook blocks the built-in editors. Run under Bun: `bun run
  * src/server.ts`. The namespace Claude sees is
- * `mcp__plugin_claude-hashline_hashline__{read,edit}`.
+ * `mcp__plugin_claude-hashline_hashline__{read,search,edit}`.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";

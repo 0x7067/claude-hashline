@@ -15,6 +15,8 @@ import {
   Patcher,
   type SnapshotStore,
   stripBom,
+  buildCompactDiffPreview,
+  type BlockResolution,
 } from "@oh-my-pi/hashline";
 import { readdirSync, statSync } from "node:fs";
 import * as os from "node:os";
@@ -22,6 +24,7 @@ import * as path from "node:path";
 import { canonicalize, JailedFilesystem, PathEscapeError } from "./jailed-fs.ts";
 import { buildRipgrepArgs, runRipgrep } from "./ripgrep.ts";
 import { recordEditSaving } from "./savings.ts";
+import { generateDiffString } from "./diff.ts";
 
 export interface HashlineContext {
   fs: JailedFilesystem;
@@ -300,26 +303,11 @@ export function normalizeColonRanges(input: string): string {
   return input.replace(/^(\s*(?:replace|delete)\s+\d+):(\d+)/gm, "$1..$2");
 }
 
-/** Context lines shown on each side of the change in an edit-result window (R3). */
-const EDIT_WINDOW_CONTEXT = 3;
-
 /**
- * Build a re-anchored numbered window of post-edit content around the change
- * (R1-R3). An edit changes the file's tag and shifts line numbers, so returning
- * a `read`-equivalent view lets the model chain a follow-up edit with no re-read.
- * The window anchors at `firstChangedLine` (the package exposes no last-changed
- * line); content outside it is summarized with a marker so large edits don't
- * echo the whole file. Mirrors `hashlineRead`'s slice + `formatNumberedLines`.
+ * Format a block resolution message for output.
  */
-function formatEditWindow(after: string, firstChangedLine: number): string {
-  const allLines = after.split("\n");
-  const start = Math.max(1, firstChangedLine - EDIT_WINDOW_CONTEXT);
-  const end = Math.min(allLines.length, firstChangedLine + EDIT_WINDOW_CONTEXT);
-  const slice = allLines.slice(start - 1, end).join("\n");
-  const head = start > 1 ? `... ${start - 1} earlier line(s)\n` : "";
-  const remaining = allLines.length - end;
-  const tail = remaining > 0 ? `\n... ${remaining} more line(s); re-read for lines beyond the window` : "";
-  return `${head}${formatNumberedLines(slice, start)}${tail}`;
+function formatBlockResolution(resolution: BlockResolution): string {
+  return `[Resolved block N to lines ${resolution.start}..${resolution.end}]`;
 }
 
 /**
@@ -382,8 +370,17 @@ export async function hashlineEdit(ctx: HashlineContext, input: string): Promise
     const blocks = result.sections
       .map(s => {
         if (s.op === "noop") return `${s.header} (no change)`;
-        const window = s.firstChangedLine !== undefined ? `\n${formatEditWindow(s.after, s.firstChangedLine)}` : "";
-        return `${s.header} (${s.op})${window}`;
+        
+        const diff = generateDiffString(s.before, s.after);
+        const preview = buildCompactDiffPreview(diff.diff);
+        
+        const warningsBlock = s.warnings.length > 0 ? `\n\nWarnings:\n${s.warnings.join("\n")}` : "";
+        const previewBlock = preview.preview ? `\n${preview.preview}` : "";
+        const blockBlock = s.blockResolutions && s.blockResolutions.length > 0
+          ? `\n${s.blockResolutions.map(formatBlockResolution).join("\n")}`
+          : "";
+          
+        return `${s.header} (${s.op})${blockBlock}${previewBlock}${warningsBlock}`;
       })
       .join("\n\n");
     // Track output tokens saved vs the str_replace a built-in edit would have emitted.

@@ -189,5 +189,6 @@ the block hook. Phase 2 (benchmark) is implemented; its deterministic parts
 tested, and the live model run requires the `claude` CLI and a corpus. The full
 pipeline (claude `-p` spawn, per-run MCP load, hashline read/edit, built-in
 blocking, scoring, stratified report) has been validated end-to-end on a pilot
-fixture across both arms. Grep tagging is deferred (`read` + `edit` only in v1);
-the model falls back to built-in `Grep`.
+fixture across both arms. Hash-tagged `search` ships alongside `read`/`edit`;
+built-in `Grep` is not blocked, so the model may still use it when only locating
+code with no edit to follow.
