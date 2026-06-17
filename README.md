@@ -72,12 +72,15 @@ filesystem is the real boundary. For an opt-out repo contents can't spoof, use
 ## Jail carve-outs
 
 The jail confines `read`/`edit`/`search` to the workspace root (cwd or
-`HASHLINE_ROOT`). Three opt-in flags widen it (all default-on in the plugin):
+`HASHLINE_ROOT`). Four opt-in flags widen it (all default-on in the plugin):
 
 - **`HASHLINE_ALLOW_MEMORY=1`** — also allow the per-project memory dir,
   `<configDir>/projects/<slug>/memory/**`, so the model can edit its auto-memory.
   `<configDir>` honors `CLAUDE_CONFIG_DIR` (default `~/.claude`). Scoped to that
   subtree only — transcripts and settings stay out.
+- **`HASHLINE_ALLOW_PLANS=1`** — also allow the plans dir, `<configDir>/plans/**`,
+  so the model can write plan files. `<configDir>` honors `CLAUDE_CONFIG_DIR`
+  (default `~/.claude`).
 - **`HASHLINE_ALLOW_TMP=1`** — also allow the system temp dir (`os.tmpdir()`) for
   staging scratch files, e.g. a PR body for `gh pr create --body-file`.
 - **`HASHLINE_ALLOW_PATHS=dir1:dir2`** — also allow each listed root (`:` on

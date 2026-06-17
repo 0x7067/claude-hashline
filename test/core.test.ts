@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import * as path from "node:path";
-import { claudeMemoryMatcher, createContext, explicitPathsMatcher, hashlineEdit, hashlineRead, hashlineSearch, type HashlineContext, normalizeColonRanges, systemTempMatcher } from "../src/core.ts";
+import { claudeMemoryMatcher, claudePlansMatcher, createContext, explicitPathsMatcher, hashlineEdit, hashlineRead, hashlineSearch, type HashlineContext, normalizeColonRanges, systemTempMatcher } from "../src/core.ts";
 import { JailedFilesystem } from "../src/jailed-fs.ts";
 
 let root: string;
@@ -269,6 +269,55 @@ describe("Claude memory carve-out (HASHLINE_ALLOW_MEMORY)", () => {
     expect(match(path.join(base, "slug", "sessions", "x.md"))).toBe(false);
     expect(match(path.join(base, "slug", "x.md"))).toBe(false);
     expect(match(path.join(base, "memory", "x.md"))).toBe(false);
+    expect(match("/etc/passwd")).toBe(false);
+  });
+});
+
+describe("Claude plans carve-out (HASHLINE_ALLOW_PLANS)", () => {
+  let configDir: string;
+  let plansDir: string;
+  let savedConfig: string | undefined;
+  let savedAllow: string | undefined;
+
+  beforeEach(() => {
+    savedConfig = process.env.CLAUDE_CONFIG_DIR;
+    savedAllow = process.env.HASHLINE_ALLOW_PLANS;
+    configDir = mkdtempSync(path.join(tmpdir(), "hashline-cfg-"));
+    plansDir = path.join(configDir, "plans");
+    mkdirSync(plansDir, { recursive: true });
+    process.env.CLAUDE_CONFIG_DIR = configDir;
+  });
+  afterEach(() => {
+    rmSync(configDir, { recursive: true, force: true });
+    if (savedConfig === undefined) delete process.env.CLAUDE_CONFIG_DIR;
+    else process.env.CLAUDE_CONFIG_DIR = savedConfig;
+    if (savedAllow === undefined) delete process.env.HASHLINE_ALLOW_PLANS;
+    else process.env.HASHLINE_ALLOW_PLANS = savedAllow;
+  });
+
+  test("flag on: create + edit succeed under plans/", async () => {
+    process.env.HASHLINE_ALLOW_PLANS = "1";
+    const c = createContext(root);
+    const f = path.join(plansDir, "my-plan.md");
+    const created = await hashlineEdit(c, `[${f}]\ninsert head:\n+# plan\n+step 1`);
+    expect(created.isError).toBe(false);
+    expect(readFileSync(f, "utf8")).toContain("# plan");
+  });
+
+  test("flag off: the plans path is rejected (default-conservative)", async () => {
+    delete process.env.HASHLINE_ALLOW_PLANS;
+    const c = createContext(root);
+    const f = path.join(plansDir, "my-plan.md");
+    writeFileSync(f, "x\n");
+    await expect(hashlineRead(c, { path: f })).rejects.toThrow(/outside the workspace/);
+  });
+
+  test("claudePlansMatcher: prefix logic + CLAUDE_CONFIG_DIR honor", () => {
+    const match = claudePlansMatcher();
+    const base = path.join(realpathSync(configDir), "plans");
+    expect(match(base)).toBe(true);
+    expect(match(path.join(base, "deep", "p.md"))).toBe(true);
+    expect(match(path.join(realpathSync(configDir), "settings.json"))).toBe(false);
     expect(match("/etc/passwd")).toBe(false);
   });
 });

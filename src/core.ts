@@ -64,6 +64,18 @@ export function claudeMemoryMatcher(): (resolved: string) => boolean {
 }
 
 /**
+ * Build a predicate that permits paths under Claude Code's plans dir,
+ * `<configDir>/plans[/**]`, so the model can write plan files. Honors
+ * `CLAUDE_CONFIG_DIR` (default `~/.claude`), same as {@link claudeMemoryMatcher}.
+ * Exported for direct unit testing.
+ */
+export function claudePlansMatcher(): (resolved: string) => boolean {
+  const configDir = canonicalize(path.resolve(process.env.CLAUDE_CONFIG_DIR ?? path.join(os.homedir(), ".claude")));
+  const plansBase = path.join(configDir, "plans");
+  return (resolved: string): boolean => resolved === plansBase || resolved.startsWith(plansBase + path.sep);
+}
+
+/**
  * Build a predicate that permits paths under the system temp dir (`os.tmpdir()`,
  * honoring `HASHLINE_TMPDIR` for tests). Lets the model stage scratch files —
  * e.g. a PR body to feed `gh pr create --body-file` — instead of dead-ending on
@@ -99,10 +111,12 @@ export function explicitPathsMatcher(): ((resolved: string) => boolean) | undefi
 /** Build a fresh context rooted at `root` (defaults to HASHLINE_ROOT or cwd). */
 export function createContext(root: string = process.env.HASHLINE_ROOT ?? process.cwd()): HashlineContext {
   // Opt-in, additive carve-outs (each OR'd onto the in-root check): the Claude
-  // memory dir (HASHLINE_ALLOW_MEMORY), the system temp dir (HASHLINE_ALLOW_TMP),
-  // and an explicit operator-supplied root list (HASHLINE_ALLOW_PATHS).
+  // memory dir (HASHLINE_ALLOW_MEMORY), the plans dir (HASHLINE_ALLOW_PLANS), the
+  // system temp dir (HASHLINE_ALLOW_TMP), and an explicit operator-supplied root
+  // list (HASHLINE_ALLOW_PATHS).
   const allows: Array<(resolved: string) => boolean> = [];
   if (envEnabled(process.env.HASHLINE_ALLOW_MEMORY)) allows.push(claudeMemoryMatcher());
+  if (envEnabled(process.env.HASHLINE_ALLOW_PLANS)) allows.push(claudePlansMatcher());
   if (envEnabled(process.env.HASHLINE_ALLOW_TMP)) allows.push(systemTempMatcher());
   const explicit = explicitPathsMatcher();
   if (explicit) allows.push(explicit);
