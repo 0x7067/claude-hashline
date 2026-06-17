@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/block-edit.sh",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/block-edit.ts\"",
             "timeout": 5
           }
         ]
@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/scripts/nudge.sh",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/nudge.ts\"",
             "timeout": 5
           }
         ]

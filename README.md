@@ -37,9 +37,9 @@ and a hook that blocks the built-in editors so the model uses hashline.
     can't escape the workspace), **read-before-edit** (you must `read` a file
     first), and **file creation** (a tagless `[path]` header creates a file) —
     then applies the patch via the engine, which rejects/recovers stale tags.
-- **PreToolUse hook** (`hooks/`) denies built-in `Edit`/`Write`/`NotebookEdit`
-  and redirects to the hashline tool — but only in projects that opt into
-  enforcement (see Enforcement); off by default, so a global install is safe.
+- **PreToolUse hook** (`hooks/`, run by Bun) denies built-in `Edit`/`Write`/`NotebookEdit`
+  and redirects to the hashline tool. Enforcement is on by default; repos can
+  opt out when they need the built-in editors (see Enforcement).
 
 ## Install
 
@@ -90,8 +90,7 @@ it (all default-on in the published plugin, default-off in the library):
 
 - **`HASHLINE_ALLOW_MEMORY=1`** — also allow any Claude Code per-project memory
   dir, `<configDir>/projects/<project>/memory/` and below, so the model can read
-  and write its auto-memory through the hashline `edit` tool instead of falling
-  back to a shell heredoc. `<configDir>` honors `CLAUDE_CONFIG_DIR` (default
+  and write its auto-memory through the hashline `edit` tool. `<configDir>` honors `CLAUDE_CONFIG_DIR` (default
   `~/.claude`). Scoped to the `.../projects/<slug>/memory/**` subtree only:
   session transcripts, settings, and everything else under `~/.claude` stay
   outside the jail.
@@ -101,13 +100,12 @@ it (all default-on in the published plugin, default-off in the library):
   ephemeral, world-writable scratch space, so the widening is bounded.
 - **`HASHLINE_ALLOW_PATHS=dir1:dir2`** — also allow any path under each listed
   root (`path.delimiter`-separated, a leading `~/` expanded), e.g. a sibling
-  repo or `~/.config`. The published plugin sets this to `~/.claude:~/.agents:~/.codex`
-  so the model can edit its own agent config/skills. Roots are operator-supplied
+  repo or `~/.config`. Use `:` between entries on macOS/Linux and `;` on Windows.
+  Roots are operator-supplied
   in the MCP env — unlike `.hashline-off`, repo contents can't inject one.
   **Note:** allowing all of `~/.claude` includes `settings.json` (whose hooks run
   shell commands), so a prompt-injected diff could reach it; the narrower
-  `HASHLINE_ALLOW_MEMORY` exists precisely to avoid that. Trim the list if you
-  don't need the whole tree.
+  `HASHLINE_ALLOW_MEMORY` exists precisely to avoid that.
 
 Set a flag to `0`/unset (or empty `HASHLINE_ALLOW_PATHS`) to drop that carve-out;
 edits are confined strictly to the workspace.

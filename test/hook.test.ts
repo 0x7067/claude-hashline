@@ -3,14 +3,14 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 
-const BLOCK = path.join(import.meta.dir, "..", "hooks", "scripts", "block-edit.sh");
-const NUDGE = path.join(import.meta.dir, "..", "hooks", "scripts", "nudge.sh");
+const BLOCK = path.join(import.meta.dir, "..", "hooks", "scripts", "block-edit.ts");
+const NUDGE = path.join(import.meta.dir, "..", "hooks", "scripts", "nudge.ts");
 
 async function run(script: string, opts: { env?: Record<string, string>; cwd?: string }): Promise<string> {
-  const proc = Bun.spawn(["bash", script], {
+  const proc = Bun.spawn(["bun", script], {
     cwd: opts.cwd,
     env: { PATH: process.env.PATH ?? "", ...opts.env },
-    stdin: new TextEncoder().encode("{}"), // no cwd in payload -> script falls back to $PWD (spawn cwd)
+    stdin: new TextEncoder().encode(JSON.stringify({ cwd: opts.cwd })),
     stdout: "pipe",
   });
   const out = await new Response(proc.stdout).text();
