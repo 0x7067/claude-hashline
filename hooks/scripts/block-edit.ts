@@ -1,8 +1,8 @@
-import { hashlineEnforced, readStdin } from "./lib-enforce.ts";
+import { hashlineEnforced, readStdin, targetInProject } from "./lib-enforce.ts";
 
 const payload = await readStdin();
 
-if (hashlineEnforced(payload)) {
+if (hashlineEnforced(payload) && targetInProject(payload)) {
   console.log(
     JSON.stringify({
       hookSpecificOutput: {
