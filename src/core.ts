@@ -302,7 +302,7 @@ export interface EditResult {
   isError: boolean;
 }
 
-const TAGLESS_CREATE_HEADER = /^\[([^\]#]+)\]\s*$/;
+const TAGLESS_CREATE_HEADER = /^\[([^#\r\n]+)\]\s*$/; // greedy to last `]`; allows bracketed paths (app/[id]/page.tsx). `#` excluded so tagged headers fall through to the package.
 
 /**
  * Be liberal in what we accept (optimize-loop cycle 1). Weaker models copy the

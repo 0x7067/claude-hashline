@@ -9,7 +9,7 @@ let root: string;
 let ctx: HashlineContext;
 
 function tagFrom(readOutput: string): string {
-  const m = /^\[[^\]]+#([0-9A-F]{4})\]/.exec(readOutput);
+  const m = /^\[.+#([0-9A-F]{4})\]/.exec(readOutput); // greedy: tolerate bracketed paths like app/[id]/page.tsx
   if (!m) throw new Error(`no tag in read output: ${readOutput}`);
   return m[1];
 }
@@ -159,6 +159,18 @@ describe("hashlineEdit ops (R3)", () => {
     expect(res.isError).toBe(false);
     // Original line 1 ("one") deleted, "zero" prepended, "two"->"TWO", "four" appended.
     expect(readFileSync(path.join(root, "a.ts"), "utf8")).toBe("zero\nTWO\nthree\nfour\n");
+  });
+
+  test("create + edit a bracketed dynamic-route path (app/[id]/page.tsx)", async () => {
+    const p = "app/[id]/page.tsx";
+    const created = await hashlineEdit(ctx, `[${p}]\ninsert head:\n+export default function Page() {}`);
+    expect(created.isError).toBe(false);
+    expect(readFileSync(path.join(root, p), "utf8")).toBe("export default function Page() {}\n");
+    // round-trip: read back the bracketed path and apply a tagged edit
+    const tag = tagFrom(await hashlineRead(ctx, { path: p }));
+    const edited = await hashlineEdit(ctx, `[${p}#${tag}]\nreplace 1..1:\n+export default function Page() { return null; }`);
+    expect(edited.isError).toBe(false);
+    expect(readFileSync(path.join(root, p), "utf8")).toBe("export default function Page() { return null; }\n");
   });
 });
 
