@@ -61,6 +61,23 @@ describe("hashlineRead (R1)", () => {
     expect(readFileSync(path.join(root, "big.ts"), "utf8")).toContain("CHANGED");
   });
 
+  test("bare re-read of unchanged file returns TAG-only; offset forces the body", async () => {
+    writeFileSync(path.join(root, "a.ts"), "a\nb\nc\n");
+    const first = await hashlineRead(ctx, { path: "a.ts" });
+    expect(first).toContain("1:a"); // first read emits the body
+    const second = await hashlineRead(ctx, { path: "a.ts" });
+    expect(second).toContain("unchanged since last read");
+    expect(second).not.toContain("1:a"); // body suppressed
+    expect(tagFrom(second)).toBe(tagFrom(first)); // same valid TAG
+    // Escape hatch: an explicit range still returns content.
+    const forced = await hashlineRead(ctx, { path: "a.ts", offset: 1 });
+    expect(forced).toContain("1:a");
+    // After a change, a bare re-read emits the body again (new TAG).
+    writeFileSync(path.join(root, "a.ts"), "a\nx\nc\n");
+    const changed = await hashlineRead(ctx, { path: "a.ts" });
+    expect(changed).toContain("2:x");
+  });
+
   test("PathEscapeError on read outside the root (KTD9)", async () => {
     await expect(hashlineRead(ctx, { path: "../escape.ts" })).rejects.toThrow(/outside the workspace/);
   });
@@ -237,7 +254,7 @@ describe("Claude memory carve-out (HASHLINE_ALLOW_MEMORY)", () => {
     const created = await hashlineEdit(c, `[${memFile}]\ninsert head:\n+# note\n+body`);
     expect(created.isError).toBe(false);
     expect(readFileSync(memFile, "utf8")).toContain("# note");
-    const out = await hashlineRead(c, { path: memFile });
+    const out = await hashlineRead(c, { path: memFile, offset: 1 }); // offset forces body (create recorded a snapshot)
     expect(out).toContain("1:# note");
     const res = await hashlineEdit(c, `[${memFile}#${tagFrom(out)}]\nreplace 2..2:\n+changed`);
     expect(res.isError).toBe(false);

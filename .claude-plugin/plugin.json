@@ -1,6 +1,6 @@
 {
   "name": "claude-hashline",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "description": "Replaces str_replace-style editing in Claude Code with line-anchored hashline patches (via an MCP server) and blocks the built-in Edit/Write/NotebookEdit tools.",
   "author": {
     "name": "Pedro Guimaraes",

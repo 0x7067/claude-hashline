@@ -1,6 +1,6 @@
 {
   "name": "claude-hashline",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Hashline edit tool for Claude Code: replaces str_replace-style editing with line-anchored hashline patches via an MCP server, and blocks the built-in editors.",

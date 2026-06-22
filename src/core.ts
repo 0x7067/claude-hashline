@@ -212,7 +212,16 @@ export async function hashlineRead(ctx0: HashlineContext, args: ReadArgs): Promi
   const raw = await ctx.fs.readText(args.path); // throws NotFoundError / PathEscapeError
   const normalized = normalizeToLF(stripBom(raw).text);
   const key = ctx.fs.canonicalPath(args.path);
-  const hash = ctx.snapshots.record(key, normalized);
+  const prev = ctx.snapshots.head(key);
+  const hash = ctx.snapshots.record(key, normalized); // reuses tag if byte-identical (read fusion)
+
+  // Re-read dedup: a bare re-read of a file unchanged since this session's last
+  // snapshot re-emits nothing — the prior TAG is still valid, so an edit can
+  // anchor to it directly. Pass offset/limit to force the body (e.g. after a
+  // compaction dropped it). Saves the dominant token sink: redundant re-reads.
+  if (prev && prev.hash === hash && !args.offset && !args.limit) {
+    return `${formatHashlineHeader(args.path, hash)}\n(unchanged since last read this session; TAG ${hash} still valid — pass offset to view content)`;
+  }
 
   const allLines = normalized.split("\n");
   const start = args.offset && args.offset > 0 ? args.offset : 1;

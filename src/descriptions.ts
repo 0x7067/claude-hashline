@@ -18,7 +18,12 @@ TAG is a 4-hex content hash of the whole file. To edit, copy the header verbatim
 into the \`edit\` tool and reference the bare line numbers. A successful \`edit\`
 returns the fresh \`[PATH#TAG]\` and a numbered window of the result, so you can
 make the next edit without re-reading; re-read only for lines outside that
-window or after an external change. Use \`offset\`/\`limit\` for large files.`;
+window or after an external change. Use \`offset\`/\`limit\` for large files.
+
+For browsing or understanding code you won't edit, use the built-in Read instead
+— its output is managed by the harness and won't pile up in context the way MCP
+results do. Reach for hashline \`read\` when you're about to edit a file (you need
+its live TAG).`;
 
 export const SEARCH_TOOL_DESCRIPTION = `Search the workspace for a regex pattern and return matches ready to edit.
 
@@ -26,7 +31,8 @@ Prefer this over the built-in Grep when your goal is to locate code and then
 change it: matches come back in the SAME hashline format as \`read\` — a
 \`[PATH#TAG]\` header per file followed by \`LINE:TEXT\` rows — and each matched
 file is snapshotted, so you can \`edit\` straight off a hit WITHOUT a separate
-\`read\` first.
+\`read\` first. For exploration you won't act on, the built-in Grep is lighter —
+its results don't persist in context.
 
     [src/app.ts#9A46]
      10:function init() {
