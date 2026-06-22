@@ -597,3 +597,47 @@ describe("hashlineSearch", () => {
     expect(out).toMatch(/\[ml\.ts#[0-9A-F]{4}\]/);
   });
 });
+
+describe("live cwd follows a worktree switch (CLAUDE_CODE_SESSION_ID)", () => {
+  const savedSid = process.env.CLAUDE_CODE_SESSION_ID;
+  let sid: string;
+  let live: string; // stands in for the worktree the session moved into
+  let cwdFile: string;
+
+  beforeEach(() => {
+    sid = `hashline-test-${process.pid}-${root.split(path.sep).pop()}`;
+    process.env.CLAUDE_CODE_SESSION_ID = sid;
+    live = mkdtempSync(path.join(tmpdir(), "hashline-live-"));
+    const cwdDir = path.join(tmpdir(), "claude-hashline-cwd");
+    mkdirSync(cwdDir, { recursive: true });
+    cwdFile = path.join(cwdDir, sid);
+    writeFileSync(cwdFile, live);
+  });
+  afterEach(() => {
+    rmSync(live, { recursive: true, force: true });
+    rmSync(cwdFile, { force: true });
+    if (savedSid === undefined) delete process.env.CLAUDE_CODE_SESSION_ID;
+    else process.env.CLAUDE_CODE_SESSION_ID = savedSid;
+  });
+
+  test("read+edit hit the live cwd, not the launch root", async () => {
+    // Same relative name exists in BOTH dirs with different content; the launch
+    // root's copy must stay untouched.
+    writeFileSync(path.join(root, "f.ts"), "launch\n");
+    writeFileSync(path.join(live, "f.ts"), "worktree\n");
+    const out = await hashlineRead(ctx, { path: "f.ts" });
+    expect(out).toContain("worktree");
+    const tag = tagFrom(out);
+    const res = await hashlineEdit(ctx, `[f.ts#${tag}]\nreplace 1..1:\n+edited`);
+    expect(res.isError).toBe(false);
+    expect(readFileSync(path.join(live, "f.ts"), "utf8")).toBe("edited\n");
+    expect(readFileSync(path.join(root, "f.ts"), "utf8")).toBe("launch\n"); // untouched
+  });
+
+  test("falls back to launch root when the hook file is absent", async () => {
+    rmSync(cwdFile, { force: true });
+    writeFileSync(path.join(root, "g.ts"), "launch\n");
+    const out = await hashlineRead(ctx, { path: "g.ts" });
+    expect(out).toContain("launch");
+  });
+});

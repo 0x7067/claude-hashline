@@ -10,6 +10,16 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "mcp__plugin_claude-hashline_hashline__(edit|read|search)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun \"${CLAUDE_PLUGIN_ROOT}/hooks/scripts/record-cwd.ts\"",
+            "timeout": 5
+          }
+        ]
       }
     ],
     "SessionStart": [

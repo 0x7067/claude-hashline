@@ -18,7 +18,7 @@ import {
   buildCompactDiffPreview,
   type BlockResolution,
 } from "@oh-my-pi/hashline";
-import { readdirSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { canonicalize, JailedFilesystem, PathEscapeError } from "./jailed-fs.ts";
@@ -26,11 +26,18 @@ import { buildRipgrepArgs, runRipgrep } from "./ripgrep.ts";
 import { recordEditSaving } from "./savings.ts";
 import { generateDiffString } from "./diff.ts";
 
-export interface HashlineContext {
+/** fs + patcher pinned to one root, sharing the context's snapshot store. */
+export interface RootBinding {
   fs: JailedFilesystem;
-  snapshots: SnapshotStore;
   patcher: Patcher;
   root: string;
+}
+
+export interface HashlineContext extends RootBinding {
+  snapshots: SnapshotStore;
+  /** Rebind fs+patcher to a different live root (git-worktree / `/cd` switch),
+   *  reusing the shared snapshot store. Cached per resolved root. */
+  rebind(root: string): RootBinding;
 }
 
 /**
@@ -121,12 +128,46 @@ export function createContext(root: string = process.env.HASHLINE_ROOT ?? proces
   const explicit = explicitPathsMatcher();
   if (explicit) allows.push(explicit);
   const extraAllow = allows.length ? (resolved: string) => allows.some(fn => fn(resolved)) : undefined;
-  const fs = new JailedFilesystem(root, extraAllow);
   const snapshots = new InMemorySnapshotStore();
   // No blockResolver: tree-sitter `block` ops are out of v1 (KTD1), so they
   // throw on apply. The adapted tool description never emits them.
-  const patcher = new Patcher({ fs, snapshots });
-  return { fs, snapshots, patcher, root: fs.root };
+  const cache = new Map<string, RootBinding>();
+  const bind = (r: string): RootBinding => {
+    const fs = new JailedFilesystem(r, extraAllow);
+    const existing = cache.get(fs.root);
+    if (existing) return existing;
+    const binding: RootBinding = { fs, patcher: new Patcher({ fs, snapshots }), root: fs.root };
+    cache.set(fs.root, binding);
+    return binding;
+  };
+  const base = bind(root);
+  return { ...base, snapshots, rebind: bind };
+}
+
+/**
+ * The cwd the session is in *now*, as stashed by the record-cwd PreToolUse hook
+ * (keyed by CLAUDE_CODE_SESSION_ID). Undefined when there's no session id (tests,
+ * direct use) or no hook file — callers then fall back to the launch root. This
+ * is how the jail follows a git-worktree / `/cd` switch the MCP protocol never
+ * reports. Trusted: cwd comes from Claude Code's hook payload, not the model.
+ */
+function liveCwd(): string | undefined {
+  const sid = process.env.CLAUDE_CODE_SESSION_ID;
+  if (!sid) return undefined;
+  try {
+    const dir = readFileSync(path.join(os.tmpdir(), "claude-hashline-cwd", sid), "utf8").trim();
+    return dir && isDirectory(dir) ? dir : undefined;
+  } catch {
+    return undefined; // no hook file yet
+  }
+}
+
+/** A context view whose fs/patcher/root follow the session's live cwd (if it
+ *  moved), keeping the shared snapshot store. Returned at the top of each tool so
+ *  the body can keep using `ctx.fs`/`ctx.root` unchanged. */
+function active(ctx: HashlineContext): HashlineContext {
+  const live = liveCwd();
+  return live ? { ...ctx, ...ctx.rebind(live) } : ctx;
 }
 
 const DEFAULT_MAX_READ_LINES = 2000;
@@ -153,7 +194,8 @@ export interface ReadArgs {
  * (so the edit-time lookup matches — feas-04), and return the hashline-tagged
  * view: a `[PATH#TAG]` header followed by `LINE:TEXT` rows (R1).
  */
-export async function hashlineRead(ctx: HashlineContext, args: ReadArgs): Promise<string> {
+export async function hashlineRead(ctx0: HashlineContext, args: ReadArgs): Promise<string> {
+  const ctx = active(ctx0);
   // Directory listing: if `path` is a directory, list its files instead of
   // dead-ending on a misleading "File not found" file-read. The dominant
   // genuine failure in the benchmark is models probing `read "."` to discover
@@ -232,7 +274,8 @@ function toWorkspaceRel(p: string | undefined): string | null {
  * and ripgrep does not follow symlinks, so results stay inside the workspace
  * (R8). Pattern syntax is Rust/RE2 (no backreferences/lookbehind).
  */
-export async function hashlineSearch(ctx: HashlineContext, args: SearchArgs): Promise<string> {
+export async function hashlineSearch(ctx0: HashlineContext, args: SearchArgs): Promise<string> {
+  const ctx = active(ctx0);
   // R8: reject any `paths` entry that escapes the jail before spawning ripgrep.
   if (args.paths) for (const p of args.paths) ctx.fs.canonicalPath(p); // throws PathEscapeError
 
@@ -330,7 +373,8 @@ function formatBlockResolution(resolution: BlockResolution): string {
  * creation (R4/KTD10) — then delegates to the package Patcher for existing
  * files (stale-tag recovery/rejection comes from the package, R5).
  */
-export async function hashlineEdit(ctx: HashlineContext, input: string): Promise<EditResult> {
+export async function hashlineEdit(ctx0: HashlineContext, input: string): Promise<EditResult> {
+  const ctx = active(ctx0);
   // Pre-scan for tagless create headers (`[path]` with no `#TAG`): the package
   // requires a tag and has no create path, so the adapter handles creation.
   const createSections = scanTaglessCreateSections(input);
