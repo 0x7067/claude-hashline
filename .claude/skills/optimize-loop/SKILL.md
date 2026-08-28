@@ -63,11 +63,11 @@ measured separately from the harness trajectory.
 
 1. `src/descriptions.ts` — the read/edit tool prompts.
 2. `src/core.ts` `errMessage()` and the inline rejection strings — make failures
-   self-correcting (e.g. when `Patch.parse` rejects `replace N:M`, append a hint
-   that ranges use `N..M`).
+   self-correcting (e.g. when `Patch.parse` rejects `PUT N:M`, append a hint
+   that ranges use `N.=M`).
 3. `src/core.ts` **tolerant input normalization** — be liberal in what you accept:
    rewrite a common, unambiguous model syntax variant into the grammar before
-   `Patch.parse` (e.g. normalize a colon range `replace N:M:` → `replace N..M:`).
+   `Patch.parse` (e.g. normalize a colon range `PUT N:M:` → `PUT N.=M:`).
    This eliminates a rejection category outright rather than explaining it, so it
    moves the primary metric (edit-fails) directly. Only normalize variants with a
    single safe interpretation; never paper over a genuinely ambiguous patch.

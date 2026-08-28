@@ -16,10 +16,13 @@ The short content hash of an entire file — the hash of its current Snapshot �
 The recorded whole-file content, keyed by canonical absolute path, from which a TAG is minted. A tool that records one is a *snapshot producer*: `read`, `search`, and `write` all record a snapshot for the files they touch. The read-before-edit gate refuses to edit any file with no snapshot recorded this session, so every edit anchors on content a producer actually returned — which is why `search` can edit a matched file with no prior `read`.
 
 ### Hunk
-A single edit operation (replace, delete, or insert) introduced by a header that names its target line(s); the text rows that follow apply to that operation. A body row with no preceding Hunk header is rejected — the error that the colon-range mistake (see Line range) produces.
+A single edit operation — `PUT` (write body rows at a Line range or a gap) or `CUT` (delete a Line range) — introduced by a header that names its target line(s); the text rows that follow apply to that operation. A header ending in `:` takes body rows; `CUT` takes none. A body row with no preceding Hunk header is rejected — the error that the colon-range mistake (see Line range) produces.
 
 ### Line range
-The span an edit operation targets, written with two dots: `N..M` for a span, `N:` for a single line. A colon between two numbers (`N:M:`) is invalid syntax — the trailing colon in a read row labels that line, it is not range punctuation.
+The span an edit operation targets, written with the inclusive separator `.=`: `PUT N.=M:` for a span, `PUT N.=N:` for a single line. A colon between two numbers (`N:M:`) is invalid syntax — the trailing colon in a read row labels that line, it is not range punctuation. Gap targets are separate from ranges: `<N` names the gap before line N (`<1` = file head) and `>N` the gap after it (`>$` = file tail).
+
+### Grammar normalization
+The adapter-side rewrite that maps a mis-spelled Hunk header onto canonical syntax before parsing: the legacy v15 verbs (`replace`/`delete`/`insert before|after|head|tail`) and colon ranges become their `PUT`/`CUT` equivalents. Deterministic, unit-tested, and a strict no-op on already-valid input — the "be liberal in what we accept" lever, first measured in Optimize loop cycle 1.
 
 ## Containment
 

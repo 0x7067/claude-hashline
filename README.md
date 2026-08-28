@@ -7,7 +7,7 @@ whole-file content hash and edits by line number.
 
 ```
 [src/app.ts#9A46]          [src/app.ts#9A46]
-1:export function hello() {   replace 2..2:
+1:export function hello() {   PUT 2.=2:
 2:  return "world";          +  return "hashline";
 3:}
 ```
@@ -168,9 +168,19 @@ bun test          # adapters, hook, benchmark core, diff-preview chaining
 bun run typecheck
 ```
 
-**Upstream pin:** `@oh-my-pi/hashline` is pinned to `15.12.4` deliberately.
-Newer majors (v18 as of 2026-08) replaced the patch grammar this plugin teaches
-the model — `replace N..M:`/`delete`/`insert` became `PUT N.=M:`/`CUT`/`PUT <N:`
-— so an upgrade means rewriting the tool descriptions, the colon-range
-normalizer, and re-running the benchmark. Treat it as a migration, not a dep
-bump.
+**Upstream pin:** `@oh-my-pi/hashline` is pinned to `18.0.9`. The v15 → v18
+migration landed in 2026-08: the grammar the plugin teaches is now `PUT N.=M:` /
+`CUT N.=M` / `PUT <N:` / `PUT >N:`, replacing v15's
+`replace`/`delete`/`insert`. Two notes for the next bump:
+
+- **Legacy verbs are still accepted.** `src/core.ts` normalizes the v15 spellings
+  (and colon ranges like `PUT 12:14:`) into v18 syntax before parsing —
+  deterministic, unit-tested, and a strict no-op on valid v18 input. Models have
+  habits; being liberal in what we accept is the house style (see
+  `docs/benchmark/LEDGER.md` cycle 1).
+- **The benchmark numbers below were measured on the v15 grammar** and have not
+  been re-run since. Re-measure before drawing grammar-sensitive conclusions.
+
+Upstream majors change the patch language, not just the API. Treat a bump as a
+migration: the tool descriptions in `src/descriptions.ts`, the normalizer, the
+hook messages, and a benchmark re-run.

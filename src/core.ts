@@ -13,6 +13,7 @@ import {
   Patch,
   Patcher,
   type SnapshotStore,
+  splitAddressableFileLines,
   stripBom,
   buildCompactDiffPreview,
   type BlockResolution,
@@ -222,7 +223,11 @@ export async function hashlineRead(ctx0: HashlineContext, args: ReadArgs): Promi
     return `${formatHashlineHeader(args.path, hash)}\n(unchanged since last read this session; TAG ${hash} still valid — pass offset to view content)`;
   }
 
-  const allLines = normalized.split("\n");
+  // Address the same lines the patch engine does: a terminal newline terminates
+  // the last line, it is not a blank line of its own. Numbering a phantom row
+  // for it would show the model an anchor `CUT` silently no-ops on; appending is
+  // `PUT >$:` instead.
+  const allLines = splitAddressableFileLines(normalized);
   const start = args.offset && args.offset > 0 ? args.offset : 1;
   const maxLines = args.limit && args.limit > 0 ? args.limit : DEFAULT_MAX_READ_LINES;
   const end = Math.min(allLines.length, start - 1 + maxLines);
@@ -356,17 +361,77 @@ export interface EditResult {
 const TAGLESS_CREATE_HEADER = /^\[([^#\r\n]+)\]\s*$/; // greedy to last `]`; allows bracketed paths (app/[id]/page.tsx). `#` excluded so tagged headers fall through to the package.
 const ANY_HEADER = /^\[[^\r\n]*\]\s*$/; // any header-shaped line, tagged or tagless — terminates a create body.
 
+/** Range endpoints as models write them: `.=` (v18 canonical), `..` (v15), and
+ *  the colon copied off a `read` row label. `-`/`…`/`=` are v18-lenient already
+ *  but are folded here too so the legacy-verb rewrite below reaches them. */
+const RANGE_SEP = String.raw`(?:\.=|\.\.|[.:\-=…])`;
+/** A range as authored: `N`, or `N<sep>M`. Captures both endpoints. */
+const RANGE = String.raw`(\d+)(?:\s*${RANGE_SEP}\s*(\d+))?`;
+
+/** Canonical inclusive range: a lone `N` becomes `N.=N`. */
+function canonRange(start: string, end: string | undefined): string {
+  return `${start}.=${end ?? start}`;
+}
+
 /**
- * Be liberal in what we accept (optimize-loop cycle 1). Weaker models copy the
- * `N:` label from `read` rows into hunk headers and write a COLON range —
- * `replace 23:23:` / `delete 12:14` — instead of the grammar's `N..M`. This was
- * 100% of the haiku arm's genuine edit-rejections. Rewrite a colon BETWEEN TWO
- * NUMBERS in a `replace`/`delete` header to `..` before parsing. A single-line
- * `replace 23:` (one number, nothing after the colon) is left untouched — it is
- * not a range.
+ * Rewrite ONE line into canonical v18 hunk-header syntax, if it is a hunk header
+ * a model plausibly mis-spelled. Everything else — body rows, section headers,
+ * prose, anything not matching a rule end-to-end — is returned byte-identical.
+ *
+ * Be liberal in what we accept (optimize-loop cycle 1, docs/benchmark/LEDGER.md).
+ * Two measured/derived tolerances, both deterministic and idempotent:
+ *
+ * 1. LEGACY VERBS. v15's `replace`/`delete`/`insert before|after|head|tail` — the
+ *    grammar this plugin taught until the v18 migration, and the one the
+ *    benchmark was measured on — map onto v18's `PUT`/`CUT` forms. Models have
+ *    habits; the v18 parser rejects the old verbs outright.
+ * 2. COLON RANGES. Weak models copy the `N:` label from a `read` row into the
+ *    header and write `PUT 23:23:` / `replace 12:14:` instead of a real range.
+ *    That was 100% of the haiku arm's genuine edit-rejections on v15, and v18
+ *    still refuses `:` as a range separator. A single-line `PUT 23:` (one number,
+ *    nothing after the colon) is valid v18 and stays a single-line range.
+ *
+ * Deliberately NOT translated: the legacy tree-sitter block ops (`replace block
+ * N:`, `delete block N`, `insert after block N:`). No block resolver is wired
+ * (KTD1), so translating them would trade the parser's teaching error for a
+ * resolver failure. They fall through and the engine says "use a concrete line
+ * range".
  */
-export function normalizeColonRanges(input: string): string {
-  return input.replace(/^(\s*(?:replace|delete)\s+\d+):(\d+)/gm, "$1..$2");
+export function normalizeHunkHeaderLine(line: string): string {
+  if (line.startsWith("+")) return line; // body row: never a header, never rewritten
+  const m = /^(\s*)(\S.*?)\s*$/.exec(line);
+  if (!m) return line;
+  const [, indent, op] = m;
+
+  const rewritten = ((): string | null => {
+    let r: RegExpExecArray | null;
+    // Legacy v15 verbs → v18 PUT/CUT.
+    if ((r = new RegExp(String.raw`^replace\s+${RANGE}\s*:$`, "i").exec(op))) return `PUT ${canonRange(r[1], r[2])}:`;
+    if ((r = new RegExp(String.raw`^delete\s+${RANGE}$`, "i").exec(op))) return `CUT ${canonRange(r[1], r[2])}`;
+    if ((r = /^insert\s+before\s+(\d+)\s*:$/i.exec(op))) return `PUT <${r[1]}:`;
+    if ((r = /^insert\s+after\s+(\d+)\s*:$/i.exec(op))) return `PUT >${r[1]}:`;
+    if (/^insert\s+head\s*:$/i.test(op)) return "PUT <1:";
+    if (/^insert\s+tail\s*:$/i.test(op)) return "PUT >$:";
+    // Already a v18 hunk header: repair only what v18 actually refuses, so a
+    // well-formed header comes back byte-identical.
+    if ((r = /^(put|cut)(\s+[<>]?\s*[\d$].*)$/i.exec(op))) {
+      const keyword = r[1].toUpperCase();
+      // `PUT 12:14:` / `CUT 5:8` — the read-row colon copied in as a separator.
+      const locator = r[2].replace(/^(\s*)(\d+):(\d+)/, "$1$2.=$3");
+      return `${keyword}${locator}`;
+    }
+    return null;
+  })();
+
+  return rewritten === null || rewritten === op ? line : `${indent}${rewritten}`;
+}
+
+/**
+ * Apply {@link normalizeHunkHeaderLine} to every line of a patch. Idempotent and
+ * a strict no-op on input that is already valid v18 syntax.
+ */
+export function normalizeHunkHeaders(input: string): string {
+  return input.split("\n").map(normalizeHunkHeaderLine).join("\n");
 }
 
 /**
@@ -457,7 +522,7 @@ interface TaggedApplyResult extends EditResult {
 async function applyTaggedSections(ctx: HashlineContext, input: string): Promise<TaggedApplyResult> {
   let patch: Patch;
   try {
-    patch = Patch.parse(normalizeColonRanges(input), { cwd: ctx.root });
+    patch = Patch.parse(normalizeHunkHeaders(input), { cwd: ctx.root });
   } catch (err) {
     return { text: errMessage(err), isError: true, changed: [] };
   }
@@ -478,7 +543,7 @@ async function applyTaggedSections(ctx: HashlineContext, input: string): Promise
       return {
         text:
           `Cannot edit '${section.path}': file does not exist. ` +
-          `To create it, send a tagless header \`[${section.path}]\` followed by \`insert head:\` and the file body.`,
+          `To create it, send a tagless header \`[${section.path}]\` followed by \`PUT <1:\` and the file body.`,
         isError: true,
         changed: [],
       };
@@ -499,6 +564,10 @@ async function applyTaggedSections(ctx: HashlineContext, input: string): Promise
     const blocks = result.sections
       .map(s => {
         if (s.op === "noop") return `${s.header} (no change)`;
+        // v18 file-level ops: `REM` deletes the file, `MV DEST` renames it. Neither
+        // has a meaningful line-window preview (the header already names the new path).
+        if (s.op === "delete") return `${s.header} (deleted)`;
+        const moveBlock = s.moveDest ? ` (moved to ${s.moveDest})` : "";
 
         const diff = generateDiffString(s.before, s.after);
         const preview = buildCompactDiffPreview(diff);
@@ -515,9 +584,14 @@ async function applyTaggedSections(ctx: HashlineContext, input: string): Promise
         // row; drop it so a fully-shown file doesn't spuriously trip the hint.
         const totalLines = afterLines[afterLines.length - 1] === "" ? afterLines.length - 1 : afterLines.length;
         const shownLines = preview.preview ? preview.preview.split("\n").filter(l => /^\d+:/.test(l)).length : 0;
-        const overflowBlock = totalLines > shownLines ? `\n... ${totalLines} lines total; re-read with offset for regions outside this preview` : "";
+        // No preview means no window to be outside of (e.g. a pure `MV`), so the
+        // hint would only be noise.
+        const overflowBlock =
+          preview.preview && totalLines > shownLines
+            ? `\n... ${totalLines} lines total; re-read with offset for regions outside this preview`
+            : "";
 
-        return `${s.header} (${s.op})${blockBlock}${previewBlock}${overflowBlock}${warningsBlock}`;
+        return `${s.header} (${s.op})${moveBlock}${blockBlock}${previewBlock}${overflowBlock}${warningsBlock}`;
       })
       .join("\n\n");
     const changed = result.sections.filter(s => s.op !== "noop").map(s => ({ before: s.before, after: s.after }));
@@ -541,13 +615,27 @@ interface CreateScan {
 }
 
 /**
+ * A whole-file write op in a create section: v18's head/tail gap locators. For a
+ * file that does not exist yet, head and tail name the same (empty) gap, so both
+ * are accepted and mean "this body IS the file". Legacy `insert head:`/
+ * `insert tail:` reach this via {@link normalizeHunkHeaderLine}.
+ */
+const CREATE_OP = /^PUT\s+(?:<1|>\$)\s*:$/;
+
+/**
  * Split `[path]`-only create sections (no `#TAG`) out of a patch, leaving tagged
- * sections in `residual`. Strict where the input is header-shaped: inside a
- * create section every non-blank row must be an `insert head:`/`insert tail:` op
- * or a `+`-prefixed body row — anything else is an error, because silently
- * dropping it would corrupt the created file. A header line (tagged or tagless)
- * always terminates the open create section, so a following tagged section can
- * never bleed rows into the create body. Exported for direct unit testing.
+ * sections in `residual`. v18 has no native create path — a section header must
+ * carry a tag and a missing file is "File not found: use the write tool" — so
+ * creation stays the adapter's job (R4/KTD10).
+ *
+ * Strict where the input is header-shaped: inside a create section every
+ * non-blank row must be a `PUT <1:` / `PUT >$:` op or a `+`-prefixed body row —
+ * anything else is an error, because silently dropping it would corrupt the
+ * created file. A header line (tagged or tagless) always terminates the open
+ * create section, so a following tagged section can never bleed rows into the
+ * create body. Op lines are read through {@link normalizeHunkHeaderLine}, so the
+ * legacy spellings are accepted here exactly as they are in tagged sections.
+ * Exported for direct unit testing.
  */
 export function scanCreateSections(input: string): CreateScan {
   const lines = input.split("\n");
@@ -559,13 +647,13 @@ export function scanCreateSections(input: string): CreateScan {
     if (!current) return null;
     if (!current.sawOp) {
       return (
-        `Create section for '${current.path}' has no \`insert head:\` line. ` +
-        `To create a file: a tagless \`[${current.path}]\` header, then \`insert head:\`, then \`+\`-prefixed body rows. ` +
+        `Create section for '${current.path}' has no \`PUT <1:\` line. ` +
+        `To create a file: a tagless \`[${current.path}]\` header, then \`PUT <1:\`, then \`+\`-prefixed body rows. ` +
         `To edit an existing file, use its tagged \`[PATH#TAG]\` header from a read.`
       );
     }
     if (current.body.length === 0) {
-      return `Create section for '${current.path}' has no body rows. Add \`+TEXT\` rows after \`insert head:\` (a lone \`+\` is a blank line).`;
+      return `Create section for '${current.path}' has no body rows. Add \`+TEXT\` rows after \`PUT <1:\` (a lone \`+\` is a blank line).`;
     }
     creates.push({ path: current.path, body: current.body.join("\n") });
     current = null;
@@ -591,7 +679,7 @@ export function scanCreateSections(input: string): CreateScan {
       residual.push(line);
       continue;
     }
-    if (/^insert (head|tail):\s*$/.test(line)) {
+    if (CREATE_OP.test(normalizeHunkHeaderLine(line))) {
       current.sawOp = true;
       continue;
     }
@@ -600,7 +688,7 @@ export function scanCreateSections(input: string): CreateScan {
         return {
           creates: [],
           residual: "",
-          error: `Create section for '${current.path}': body row ${JSON.stringify(line)} appears before an \`insert head:\` line. Put \`insert head:\` between the \`[${current.path}]\` header and the body rows.`,
+          error: `Create section for '${current.path}': body row ${JSON.stringify(line)} appears before a \`PUT <1:\` line. Put \`PUT <1:\` between the \`[${current.path}]\` header and the body rows.`,
         };
       }
       current.body.push(line.slice(1));
@@ -613,7 +701,7 @@ export function scanCreateSections(input: string): CreateScan {
       error:
         `Create section for '${current.path}': line ${JSON.stringify(line)} is not valid here. ` +
         `Every body row must start with '+' (a lone \`+\` is a blank line); nothing was applied. ` +
-        `Ops other than \`insert head:\`/\`insert tail:\` need an existing file — use its tagged \`[PATH#TAG]\` header.`,
+        `Ops other than \`PUT <1:\`/\`PUT >$:\` need an existing file — use its tagged \`[PATH#TAG]\` header.`,
     };
   }
   const err = close();

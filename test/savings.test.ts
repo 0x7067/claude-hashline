@@ -88,7 +88,7 @@ describe("recordEditSaving + readRollup", () => {
   test("appends a v2 row and sums across calls", () => {
     const before = "keep\n" + "old".repeat(50); // 2 lines, 2nd is large
     const after = "keep\nnew content here";
-    const input = "[a#ABCD]\nreplace 2:\n+new content here";
+    const input = "[a#ABCD]\nPUT 2.=2:\n+new content here";
     const s1 = recordEditSaving(root, input, [{ before, after }]);
     expect(s1).not.toBeNull();
     expect(s1!.baselineTokens).toBe(strReplaceTokens(before, after));
@@ -106,7 +106,7 @@ describe("recordEditSaving + readRollup", () => {
     const file = ledgerPathFor(root);
     writeFileSync(file, JSON.stringify({ v: 1, ts: 1, sections: 1, fullWriteTokens: 1000, patchTokens: 50, savedTokens: 950 }) + "\n");
     // A large old_string is the win case: hashline skips reproducing it, str_replace can't.
-    recordEditSaving(root, "[a#ABCD]\nreplace 1:\n+yy", [{ before: "x".repeat(400) + "\nbbbb", after: "yy\nbbbb" }]);
+    recordEditSaving(root, "[a#ABCD]\nPUT 1.=1:\n+yy", [{ before: "x".repeat(400) + "\nbbbb", after: "yy\nbbbb" }]);
     const r = readRollup(root);
     expect(r.legacy.edits).toBe(1);
     expect(r.legacy.savedTokens).toBe(950);
@@ -158,7 +158,7 @@ describe("integration through hashlineEdit", () => {
     writeFileSync(path.join(root, "big.ts"), Array.from({ length: 40 }, (_, i) => `const v${i} = ${i};`).join("\n") + "\n");
     const tag = tagFrom(await hashlineRead(ctx, { path: "big.ts" }));
     // Delete 38 lines: hashline emits a tiny `delete`, str_replace would emit all 38 as old_string.
-    const res = await hashlineEdit(ctx, `[big.ts#${tag}]\ndelete 2..39`);
+    const res = await hashlineEdit(ctx, `[big.ts#${tag}]\nCUT 2.=39`);
     expect(res.isError).toBe(false);
     const r = readRollup(root);
     expect(r.current.edits).toBe(1);

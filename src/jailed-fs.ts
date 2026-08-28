@@ -85,11 +85,42 @@ export class JailedFilesystem extends NodeFilesystem {
     return super.readText(this.resolveInside(p));
   }
 
+  /** v18's patcher sniffs the BOM through `readBinary`; without this override it
+   *  would resolve the section's authored (relative) path against `process.cwd()`
+   *  instead of the jail root — reading the wrong file, or none at all. */
+  override async readBinary(p: string): Promise<Uint8Array> {
+    return super.readBinary(this.resolveInside(p));
+  }
+
   override async writeText(p: string, content: string) {
     return super.writeText(this.resolveInside(p), content);
   }
 
+  /** `REM` (v18 file-level op) routes here. Jail it like every other write. */
+  override async delete(p: string): Promise<void> {
+    return super.delete(this.resolveInside(p));
+  }
+
+  /** `MV DEST` (v18 file-level op) routes here. The destination never passes
+   *  through the adapter's per-section gate, so containment is enforced on BOTH
+   *  ends here — otherwise a section could rename a jailed file out of the tree. */
+  override async move(from: string, to: string, content?: string): Promise<void> {
+    return super.move(this.resolveInside(from), this.resolveInside(to), content);
+  }
+
   override async exists(p: string): Promise<boolean> {
     return super.exists(this.resolveInside(p));
+  }
+
+  /** Tag-based path recovery may redirect a section onto the file its snapshot
+   *  tag names. Snapshot keys are canonical paths this jail minted, so this is
+   *  normally in-root — refuse anything that isn't, rather than trusting that. */
+  override allowTagPathRecovery(_authoredPath: string, resolvedPath: string): boolean {
+    try {
+      this.resolveInside(resolvedPath);
+      return true;
+    } catch {
+      return false;
+    }
   }
 }

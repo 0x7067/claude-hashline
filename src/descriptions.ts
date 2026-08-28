@@ -1,8 +1,15 @@
 /**
  * Model-facing tool descriptions. Adapted from @oh-my-pi/hashline's `prompt.md`
- * (MIT) per KTD4: the tree-sitter `block` ops are removed (out of v1 — they
- * need a native resolver, KTD1) and the "use the write tool to create files"
- * line is replaced with this adapter's tagless-create convention (KTD10).
+ * (MIT) per KTD4 — v18's `PUT`/`CUT` grammar as of the 15.12.4 → 18.0.9
+ * migration. Three deviations from upstream's prompt:
+ *  - the tree-sitter block locators (`PUT N*:`, `PUT >N*:`, `CUT N*`) are
+ *    removed: no resolver is wired (KTD1), so the engine rejects them;
+ *  - the register/clipboard ops (`CUT … @name` + `PUT … @name`) are removed —
+ *    they work, but they are a second grammar to learn for a move this adapter's
+ *    callers do with a plain cut+put; and the file-level `REM`/`MV` ops are left
+ *    undocumented (they apply, jailed, if a model emits them anyway);
+ *  - "use the `write` tool to create new files" is replaced with this adapter's
+ *    tagless-create convention (KTD10) — there is no `write` tool here.
  */
 
 export const READ_TOOL_DESCRIPTION = `Read a text file and return it in hashline format for editing.
@@ -60,41 +67,55 @@ Each section starts with the \`[PATH#TAG]\` header from your latest \`read\` of 
 file (the TAG proves the file is unchanged; a stale TAG is rejected). Reference
 bare line numbers from that read.
 
-Operations:
-- \`replace N..M:\` — replace lines N..M with the body rows below (\`replace N:\` for one line).
-- \`delete N..M\` — delete lines N..M (no body).
-- \`insert before N:\` / \`insert after N:\` — insert body rows before/after line N.
-- \`insert head:\` / \`insert tail:\` — insert body rows at the start/end of the file.
+Operations. A header ending in \`:\` takes \`+\` body rows below it; \`CUT\` takes none.
+- \`PUT N.=M:\` — replace original lines N through M (INCLUSIVE) with the body rows.
+- \`CUT N.=M\` — delete original lines N through M. No body.
+- \`PUT <N:\` — insert the body rows BEFORE line N (\`PUT <1:\` = start of file).
+- \`PUT >N:\` — insert the body rows AFTER line N (\`PUT >$:\` = end of file).
+- Single line: \`PUT 7.=7:\` / \`CUT 7.=7\`.
 
-Line ranges use TWO DOTS, never a colon between the numbers. Write \`replace 12..14:\`
-for a span and \`replace 23:\` for a single line. A colon range like \`replace 23:23:\`
-or \`replace 12:14:\` is INVALID and will be rejected — the \`N:\` in a \`read\` row
-(\`23:export …\`) labels the line, it is not range syntax.
+The range is the ORIGINAL lines you consume; body length is irrelevant (replacing
+1 line with 10 is still \`PUT N.=N:\`). Numbers refer to the file as you read it and
+do NOT shift as earlier hunks in the same call apply.
 
-Body rows are \`+TEXT\`; \`+\` alone is a blank line. To write a literal line starting
-with \`+\` or \`-\`, prefix it (\`++text\`, \`+-text\`). Issue one hunk per range.
+Range endpoints are joined by \`.=\` — \`PUT 12.=14:\`, never a colon between the two
+numbers. The \`N:\` in a \`read\` row (\`23:export …\`) labels that line; it is not range
+syntax, so \`PUT 12:14:\` is wrong (this tool repairs it, but write \`.=\`).
 
-Example — replace line 2 and insert after line 3:
+Body rows are \`+TEXT\`, inserted verbatim with their leading whitespace; \`+\` alone
+is a blank line. There is NO other row kind — never write \`-old\` or a bare context
+line. The range does the deleting; the body is the FINAL content. To keep a line,
+leave it out of every range. For a literal line starting with \`+\` or \`-\`, prefix it
+(\`++text\`, \`+- item\` for a Markdown bullet). One hunk per range.
+
+Example — replace line 2 and add a line after line 3:
 
     [src/app.ts#9A46]
-    replace 2..2:
+    PUT 2.=2:
     +  return "hashline";
-    insert after 3:
+    PUT >3:
     +// done
 
-Create a new file with a TAGLESS header and an \`insert head:\` body:
+Create a new file with a TAGLESS header (no \`#TAG\`) and a \`PUT <1:\` body:
 
     [src/new.ts]
-    insert head:
+    PUT <1:
     +export const x = 1;
 
 EVERY body row of a create must start with \`+\` — a row without it is rejected
 (never silently dropped). Tagged edit sections and tagless create sections can
 be mixed in one call; if any section is rejected, nothing is applied.
 
+Ranges stay TIGHT: cover only the lines whose content changes, never widen over
+lines you are keeping (a widened \`PUT\` drops the keepers you retype). A pure
+addition is \`PUT <N:\`/\`PUT >N:\`, never a widened \`PUT N.=M:\`. Non-adjacent changes
+are separate hunks. Never start or end a range mid-expression, and never anchor a
+hunk into a region you have not seen as \`LINE:TEXT\` rows — re-\`read\` it first.
+
 A successful edit returns the new \`[PATH#TAG]\` and a numbered window around the
 change — anchor your next edit to that tag and those line numbers directly,
-without re-reading the file.
+without re-reading the file. On a stale-tag rejection or any surprising result,
+STOP and re-\`read\` before editing again.
 
 You must \`read\` a file before your first edit. The built-in Edit/Write tools are
 disabled — use this tool for all text edits.`;
