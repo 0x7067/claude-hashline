@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import * as path from "node:path";
-import { claudeMemoryMatcher, claudePlansMatcher, createContext, explicitPathsMatcher, hashlineEdit, hashlineRead, hashlineSearch, type HashlineContext, normalizeColonRanges, systemTempMatcher } from "../src/core.ts";
+import { claudeMemoryMatcher, claudePlansMatcher, createContext, explicitPathsMatcher, hashlineEdit, hashlineRead, hashlineSearch, type HashlineContext, normalizeColonRanges, scanCreateSections, systemTempMatcher } from "../src/core.ts";
 import { JailedFilesystem } from "../src/jailed-fs.ts";
 
 let root: string;
@@ -494,6 +494,61 @@ describe("file creation (R4/KTD10)", () => {
     const res = await hashlineEdit(ctx, `[dup.ts]\ninsert head:\n+nope`);
     expect(res.isError).toBe(true);
     expect(res.text).toMatch(/already exists/);
+  });
+
+  test("a body row missing its '+' is a hard error, not a silent drop", async () => {
+    const res = await hashlineEdit(ctx, `[a.ts]\ninsert head:\n+line1\nline2 forgot plus\n+line3`);
+    expect(res.isError).toBe(true);
+    expect(res.text).toMatch(/must start with '\+'/);
+    expect(existsSync(path.join(root, "a.ts"))).toBe(false); // nothing written
+  });
+
+  test("a body row before `insert head:` is a hard error, not a silent drop", async () => {
+    const res = await hashlineEdit(ctx, `[a.ts]\n+orphan body row`);
+    expect(res.isError).toBe(true);
+    expect(res.text).toMatch(/before an `insert head:`/);
+    expect(existsSync(path.join(root, "a.ts"))).toBe(false);
+  });
+
+  test("a create section with no insert op is a hard error", async () => {
+    const res = await hashlineEdit(ctx, `[a.ts]\nreplace 1..1:\n+text`);
+    expect(res.isError).toBe(true);
+    expect(res.text).toMatch(/is not valid here/);
+    expect(existsSync(path.join(root, "a.ts"))).toBe(false);
+  });
+
+  test("mixed input: a create and a tagged edit in one call both apply", async () => {
+    writeFileSync(path.join(root, "old.ts"), "const x = 1;\n");
+    const read = await hashlineRead(ctx, { path: "old.ts" });
+    const header = read.split("\n")[0];
+    const res = await hashlineEdit(ctx, `[new.ts]\ninsert head:\n+created\n${header}\nreplace 1..1:\n+const x = 2;`);
+    expect(res.isError).toBe(false);
+    expect(res.text).toMatch(/\(create\)/);
+    expect(res.text).toMatch(/\[old\.ts#[0-9A-F]{4}\]/);
+    expect(readFileSync(path.join(root, "old.ts"), "utf8")).toBe("const x = 2;\n");
+    expect(readFileSync(path.join(root, "new.ts"), "utf8")).toBe("created\n"); // no bleed from the tagged section
+  });
+
+  test("mixed input: a rejected tagged section blocks the create too (atomic resend)", async () => {
+    writeFileSync(path.join(root, "old.ts"), "const x = 1;\n");
+    // Never read → the read-before-edit gate rejects the tagged section.
+    const res = await hashlineEdit(ctx, `[new.ts]\ninsert head:\n+created\n[old.ts#0000]\nreplace 1..1:\n+const x = 2;`);
+    expect(res.isError).toBe(true);
+    expect(existsSync(path.join(root, "new.ts"))).toBe(false);
+    expect(readFileSync(path.join(root, "old.ts"), "utf8")).toBe("const x = 1;\n");
+  });
+
+  test("a tagged header terminates a create body (no cross-contamination)", () => {
+    const scan = scanCreateSections(`[new.ts]\ninsert head:\n+a\n[old.ts#ABCD]\ninsert head:\n+b`);
+    expect(scan.error).toBeNull();
+    expect(scan.creates).toEqual([{ path: "new.ts", body: "a" }]);
+    expect(scan.residual).toBe("[old.ts#ABCD]\ninsert head:\n+b");
+  });
+
+  test("blank lines between sections are tolerated as separators", async () => {
+    const res = await hashlineEdit(ctx, `[a.ts]\ninsert head:\n+one\n+\n+three\n`);
+    expect(res.isError).toBe(false);
+    expect(readFileSync(path.join(root, "a.ts"), "utf8")).toBe("one\n\nthree\n");
   });
 });
 

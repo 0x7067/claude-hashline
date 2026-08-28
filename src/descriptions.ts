@@ -88,6 +88,10 @@ Create a new file with a TAGLESS header and an \`insert head:\` body:
     insert head:
     +export const x = 1;
 
+EVERY body row of a create must start with \`+\` — a row without it is rejected
+(never silently dropped). Tagged edit sections and tagless create sections can
+be mixed in one call; if any section is rejected, nothing is applied.
+
 A successful edit returns the new \`[PATH#TAG]\` and a numbered window around the
 change — anchor your next edit to that tag and those line numbers directly,
 without re-reading the file.
