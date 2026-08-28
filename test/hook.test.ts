@@ -6,11 +6,11 @@ import * as path from "node:path";
 const BLOCK = path.join(import.meta.dir, "..", "hooks", "scripts", "block-edit.ts");
 const NUDGE = path.join(import.meta.dir, "..", "hooks", "scripts", "nudge.ts");
 
-async function run(script: string, opts: { env?: Record<string, string>; cwd?: string }): Promise<string> {
+async function run(script: string, opts: { env?: Record<string, string>; cwd?: string; payload?: Record<string, unknown> }): Promise<string> {
   const proc = Bun.spawn(["bun", script], {
     cwd: opts.cwd,
     env: { PATH: process.env.PATH ?? "", ...opts.env },
-    stdin: new TextEncoder().encode(JSON.stringify({ cwd: opts.cwd })),
+    stdin: new TextEncoder().encode(JSON.stringify({ cwd: opts.cwd, ...opts.payload })),
     stdout: "pipe",
   });
   const out = await new Response(proc.stdout).text();
@@ -26,6 +26,16 @@ describe("block hook — enforce-by-default with opt-out (R7/R9)", () => {
       const json = JSON.parse(out);
       expect(json.hookSpecificOutput.permissionDecision).toBe("deny");
       expect(json.hookSpecificOutput.permissionDecisionReason).toMatch(/hashline edit tool/);
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
+  });
+
+  test("NotebookEdit is never blocked (hashline has no notebook support)", async () => {
+    const work = mkdtempSync(path.join(tmpdir(), "hashline-cwd-"));
+    try {
+      const out = await run(BLOCK, { cwd: work, env: { HOME: "/nonexistent-home" }, payload: { tool_name: "NotebookEdit" } });
+      expect(out.trim()).toBe("");
     } finally {
       rmSync(work, { recursive: true, force: true });
     }

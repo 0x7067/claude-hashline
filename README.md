@@ -30,8 +30,9 @@ Background on why line-anchored editing beats string replacement:
   - `edit` — adds three gates over the engine: path containment (can't escape the
     workspace), read-before-edit, and file creation (a tagless `[path]` header
     creates a file). Stale tags are rejected/recovered by the engine.
-- **PreToolUse hook** (`hooks/`) denies built-in `Edit`/`Write`/`NotebookEdit`
-  and redirects to hashline. A `SessionStart` hook nudges the model up front so
+- **PreToolUse hook** (`hooks/`) denies built-in `Edit`/`Write` and redirects to
+  hashline. `NotebookEdit` stays available — hashline has no notebook support,
+  and line-editing raw `.ipynb` JSON is worse than the built-in. A `SessionStart` hook nudges the model up front so
   it doesn't waste a turn on a blocked built-in.
 
 ## Install
