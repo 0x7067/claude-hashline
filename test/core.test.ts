@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import * as path from "node:path";
-import { claudeMemoryMatcher, claudePlansMatcher, createContext, explicitPathsMatcher, hashlineEdit, hashlineRead, hashlineSearch, type HashlineContext, normalizeColonRanges, systemTempMatcher } from "../src/core.ts";
+import { claudeMemoryMatcher, claudePlansMatcher, createContext, explicitPathsMatcher, hashlineEdit, hashlineRead, hashlineSearch, type HashlineContext, normalizeHunkHeaders, scanCreateSections, systemTempMatcher } from "../src/core.ts";
 import { JailedFilesystem } from "../src/jailed-fs.ts";
 
 let root: string;
@@ -56,7 +56,7 @@ describe("hashlineRead (R1)", () => {
     expect(out).toContain("more line(s)");
     // A whole-file edit anchored past the slice still validates (snapshot is full-file).
     const tag = tagFrom(out);
-    const res = await hashlineEdit(ctx, `[big.ts#${tag}]\nreplace 9..9:\n+CHANGED`);
+    const res = await hashlineEdit(ctx, `[big.ts#${tag}]\nPUT 9.=9:\n+CHANGED`);
     expect(res.isError).toBe(false);
     expect(readFileSync(path.join(root, "big.ts"), "utf8")).toContain("CHANGED");
   });
@@ -81,28 +81,102 @@ describe("hashlineRead (R1)", () => {
   test("PathEscapeError on read outside the root (KTD9)", async () => {
     await expect(hashlineRead(ctx, { path: "../escape.ts" })).rejects.toThrow(/outside the workspace/);
   });
+
+  test("a terminal newline is not numbered as a phantom trailing row", async () => {
+    // v18 addresses the line a terminal newline TERMINATES, not a blank line after
+    // it: `CUT 3.=3` on "a\nb\n" silently no-ops. Showing a `3:` row would advertise
+    // an anchor the engine ignores; appending is `PUT >$:`.
+    writeFileSync(path.join(root, "a.ts"), "a\nb\n");
+    const out = await hashlineRead(ctx, { path: "a.ts" });
+    expect(out.split("\n")).toEqual([out.split("\n")[0], "1:a", "2:b"]);
+    // A file with no terminal newline still shows every line.
+    writeFileSync(path.join(root, "b.ts"), "a\nb");
+    expect((await hashlineRead(ctx, { path: "b.ts" })).split("\n").slice(1)).toEqual(["1:a", "2:b"]);
+    // The "more lines" hint counts addressable lines, not the phantom row.
+    writeFileSync(path.join(root, "c.ts"), "1\n2\n3\n");
+    const sliced = await hashlineRead(ctx, { path: "c.ts", offset: 1, limit: 2 });
+    expect(sliced).toContain("... 1 more line(s)");
+  });
 });
 
-describe("colon-range tolerance (optimize-loop cycle 1)", () => {
-  test("normalizeColonRanges rewrites N:M ranges, leaves single-line N: alone", () => {
-    expect(normalizeColonRanges("replace 23:23:")).toBe("replace 23..23:");
-    expect(normalizeColonRanges("replace 12:14:")).toBe("replace 12..14:");
-    expect(normalizeColonRanges("delete 5:8")).toBe("delete 5..8");
-    // Single-line replace is valid syntax and must be preserved.
-    expect(normalizeColonRanges("replace 23:")).toBe("replace 23:");
-    // Already-correct ranges and body rows are untouched.
-    expect(normalizeColonRanges("replace 2..2:\n+hi")).toBe("replace 2..2:\n+hi");
-    // A `+`-body line that contains a colon range is not a header — leave it.
-    expect(normalizeColonRanges("+const a = b ? 1:2;")).toBe("+const a = b ? 1:2;");
+describe("hunk-header normalization (optimize-loop cycle 1, re-derived for v18)", () => {
+  test("legacy v15 verbs map onto the v18 PUT/CUT forms", () => {
+    expect(normalizeHunkHeaders("replace 12..14:")).toBe("PUT 12.=14:");
+    expect(normalizeHunkHeaders("replace 23:")).toBe("PUT 23.=23:"); // single-line legacy form
+    expect(normalizeHunkHeaders("delete 5..8")).toBe("CUT 5.=8");
+    expect(normalizeHunkHeaders("delete 7")).toBe("CUT 7.=7");
+    expect(normalizeHunkHeaders("insert before 4:")).toBe("PUT <4:");
+    expect(normalizeHunkHeaders("insert after 9:")).toBe("PUT >9:");
+    expect(normalizeHunkHeaders("insert head:")).toBe("PUT <1:");
+    expect(normalizeHunkHeaders("insert tail:")).toBe("PUT >$:");
+    // Indentation is preserved; the verb is matched case-insensitively.
+    expect(normalizeHunkHeaders("  Replace 2..2:")).toBe("  PUT 2.=2:");
+  });
+
+  test("colon ranges copied off a read row become `.=` ranges", () => {
+    expect(normalizeHunkHeaders("PUT 23:23:")).toBe("PUT 23.=23:");
+    expect(normalizeHunkHeaders("PUT 12:14:")).toBe("PUT 12.=14:");
+    expect(normalizeHunkHeaders("CUT 5:8")).toBe("CUT 5.=8");
+    expect(normalizeHunkHeaders("replace 23:23:")).toBe("PUT 23.=23:"); // legacy verb + colon range
+    expect(normalizeHunkHeaders("put 12:14:")).toBe("PUT 12.=14:"); // lowercased keyword too
+  });
+
+  test("valid v18 input is a strict no-op, and normalization is idempotent", () => {
+    const valid = [
+      "[src/a.ts#9A46]",
+      "PUT 2.=2:",
+      "+  return 1;",
+      "PUT 23:", // single-line span: valid v18, must not be rewritten
+      "PUT <1:",
+      "PUT >$:",
+      "PUT >7:",
+      "CUT 3.=9",
+      "CUT 4",
+      "PUT 1*:", // block locator: left alone so the engine can teach the fallback
+      "CUT 1* @fn",
+      "REM",
+      "MV lib/a.ts",
+      "+const a = b ? 1:2;", // a body row that merely contains a colon range
+      "+delete 5..8", // a body row that literally spells a legacy header
+      "prose that mentions delete 5..8 in passing;",
+    ].join("\n");
+    expect(normalizeHunkHeaders(valid)).toBe(valid);
+    const once = normalizeHunkHeaders("replace 12:14:\n+x\ninsert tail:\n+y");
+    expect(normalizeHunkHeaders(once)).toBe(once);
   });
 
   test("hashlineEdit applies a colon-range header that the grammar would reject", async () => {
     writeFileSync(path.join(root, "a.ts"), "one\ntwo\nthree\n");
     const tag = tagFrom(await hashlineRead(ctx, { path: "a.ts" }));
     // Model wrote a colon range copied from the read-row label; harness tolerates it.
-    const res = await hashlineEdit(ctx, `[a.ts#${tag}]\nreplace 2:2:\n+TWO`);
+    const res = await hashlineEdit(ctx, `[a.ts#${tag}]\nPUT 2:2:\n+TWO`);
     expect(res.isError).toBe(false);
     expect(readFileSync(path.join(root, "a.ts"), "utf8")).toBe("one\nTWO\nthree\n");
+  });
+
+  test("hashlineEdit applies a whole patch written in the legacy v15 grammar", async () => {
+    writeFileSync(path.join(root, "a.ts"), "one\ntwo\nthree\n");
+    const tag = tagFrom(await hashlineRead(ctx, { path: "a.ts" }));
+    const res = await hashlineEdit(
+      ctx,
+      `[a.ts#${tag}]\nreplace 2..2:\n+TWO\ninsert after 3:\n+four\ninsert head:\n+zero\ndelete 1`,
+    );
+    expect(res.isError).toBe(false);
+    expect(readFileSync(path.join(root, "a.ts"), "utf8")).toBe("zero\nTWO\nthree\nfour\n");
+  });
+
+  test("a legacy create section still creates the file", async () => {
+    const res = await hashlineEdit(ctx, `[legacy.ts]\ninsert head:\n+export const x = 1;`);
+    expect(res.isError).toBe(false);
+    expect(readFileSync(path.join(root, "legacy.ts"), "utf8")).toBe("export const x = 1;\n");
+  });
+
+  test("legacy block ops are NOT translated — the engine teaches the line-range fallback", async () => {
+    writeFileSync(path.join(root, "a.ts"), "function f() {\n  return 1;\n}\n");
+    const tag = tagFrom(await hashlineRead(ctx, { path: "a.ts" }));
+    const res = await hashlineEdit(ctx, `[a.ts#${tag}]\nreplace block 1:\n+function f() { return 2; }`);
+    expect(res.isError).toBe(true);
+    expect(readFileSync(path.join(root, "a.ts"), "utf8")).toBe("function f() {\n  return 1;\n}\n");
   });
 });
 
@@ -110,13 +184,13 @@ describe("edit-result window enables chaining (R1, R2)", () => {
   test("edit returns post-edit tag + numbered window; a chained edit applies with no re-read", async () => {
     writeFileSync(path.join(root, "a.ts"), "one\ntwo\nthree\nfour\nfive\n");
     const tag1 = tagFrom(await hashlineRead(ctx, { path: "a.ts" }));
-    const r1 = await hashlineEdit(ctx, `[a.ts#${tag1}]\nreplace 2..2:\n+TWO`);
+    const r1 = await hashlineEdit(ctx, `[a.ts#${tag1}]\nPUT 2.=2:\n+TWO`);
     expect(r1.isError).toBe(false);
     // Window shows the changed line at its post-edit number.
     expect(r1.text).toContain("2:TWO");
     // Chain a second edit using ONLY the tag from r1 — no intervening read.
     const tag2 = tagFrom(r1.text);
-    const r2 = await hashlineEdit(ctx, `[a.ts#${tag2}]\nreplace 4..4:\n+FOUR`);
+    const r2 = await hashlineEdit(ctx, `[a.ts#${tag2}]\nPUT 4.=4:\n+FOUR`);
     expect(r2.isError).toBe(false);
     expect(readFileSync(path.join(root, "a.ts"), "utf8")).toBe("one\nTWO\nthree\nFOUR\nfive\n");
   });
@@ -124,7 +198,7 @@ describe("edit-result window enables chaining (R1, R2)", () => {
   test("window tag matches a fresh read of the post-edit file (re-anchor correctness)", async () => {
     writeFileSync(path.join(root, "a.ts"), "a\nb\nc\n");
     const tag = tagFrom(await hashlineRead(ctx, { path: "a.ts" }));
-    const r = await hashlineEdit(ctx, `[a.ts#${tag}]\nreplace 2..2:\n+B`);
+    const r = await hashlineEdit(ctx, `[a.ts#${tag}]\nPUT 2.=2:\n+B`);
     expect(r.isError).toBe(false);
     const freshTag = tagFrom(await hashlineRead(ctx, { path: "a.ts" }));
     expect(tagFrom(r.text)).toBe(freshTag);
@@ -134,10 +208,10 @@ describe("edit-result window enables chaining (R1, R2)", () => {
     writeFileSync(path.join(root, "a.ts"), "one\ntwo\nthree\n");
     const tag1 = tagFrom(await hashlineRead(ctx, { path: "a.ts" }));
     // Insert two lines after line 1 -> "three" moves from line 3 to line 5.
-    const r1 = await hashlineEdit(ctx, `[a.ts#${tag1}]\ninsert after 1:\n+x\n+y`);
+    const r1 = await hashlineEdit(ctx, `[a.ts#${tag1}]\nPUT >1:\n+x\n+y`);
     expect(r1.isError).toBe(false);
     const tag2 = tagFrom(r1.text);
-    const r2 = await hashlineEdit(ctx, `[a.ts#${tag2}]\nreplace 5..5:\n+THREE`);
+    const r2 = await hashlineEdit(ctx, `[a.ts#${tag2}]\nPUT 5.=5:\n+THREE`);
     expect(r2.isError).toBe(false);
     expect(readFileSync(path.join(root, "a.ts"), "utf8")).toBe("one\nx\ny\ntwo\nTHREE\n");
   });
@@ -145,7 +219,7 @@ describe("edit-result window enables chaining (R1, R2)", () => {
   test("noop edit surfaces the tag and no window", async () => {
     writeFileSync(path.join(root, "a.ts"), "one\ntwo\n");
     const tag = tagFrom(await hashlineRead(ctx, { path: "a.ts" }));
-    const r = await hashlineEdit(ctx, `[a.ts#${tag}]\nreplace 1..1:\n+one`); // identical -> noop
+    const r = await hashlineEdit(ctx, `[a.ts#${tag}]\nPUT 1.=1:\n+one`); // identical -> noop
     expect(r.isError).toBe(false);
     expect(r.text).toContain("no change");
     expect(r.text).toMatch(/^\[a\.ts#[0-9A-F]{4}\]/);
@@ -155,23 +229,23 @@ describe("edit-result window enables chaining (R1, R2)", () => {
     // Whole file fits the window -> no hint (trailing newline must not inflate the count).
     writeFileSync(path.join(root, "small.ts"), "one\ntwo\nthree\n");
     const t1 = tagFrom(await hashlineRead(ctx, { path: "small.ts" }));
-    const small = await hashlineEdit(ctx, `[small.ts#${t1}]\nreplace 2..2:\n+TWO`);
+    const small = await hashlineEdit(ctx, `[small.ts#${t1}]\nPUT 2.=2:\n+TWO`);
     expect(small.text).not.toContain("lines total");
     // A change in a larger file shows only context -> hint points the model to re-read.
     writeFileSync(path.join(root, "big.ts"), Array.from({ length: 30 }, (_, i) => `line${i + 1}`).join("\n") + "\n");
     const t2 = tagFrom(await hashlineRead(ctx, { path: "big.ts" }));
-    const big = await hashlineEdit(ctx, `[big.ts#${t2}]\nreplace 15..15:\n+CHANGED`);
+    const big = await hashlineEdit(ctx, `[big.ts#${t2}]\nPUT 15.=15:\n+CHANGED`);
     expect(big.text).toContain("30 lines total");
   });
 });
 
 describe("hashlineEdit ops (R3)", () => {
-  test("replace, insert after, insert head, delete", async () => {
+  test("PUT span, PUT after, PUT head, CUT", async () => {
     writeFileSync(path.join(root, "a.ts"), "one\ntwo\nthree\n");
     const tag = tagFrom(await hashlineRead(ctx, { path: "a.ts" }));
     const res = await hashlineEdit(
       ctx,
-      `[a.ts#${tag}]\nreplace 2..2:\n+TWO\ninsert after 3:\n+four\ninsert head:\n+zero\ndelete 1`,
+      `[a.ts#${tag}]\nPUT 2.=2:\n+TWO\nPUT >3:\n+four\nPUT <1:\n+zero\nCUT 1.=1`,
     );
     expect(res.isError).toBe(false);
     // Original line 1 ("one") deleted, "zero" prepended, "two"->"TWO", "four" appended.
@@ -180,12 +254,12 @@ describe("hashlineEdit ops (R3)", () => {
 
   test("create + edit a bracketed dynamic-route path (app/[id]/page.tsx)", async () => {
     const p = "app/[id]/page.tsx";
-    const created = await hashlineEdit(ctx, `[${p}]\ninsert head:\n+export default function Page() {}`);
+    const created = await hashlineEdit(ctx, `[${p}]\nPUT <1:\n+export default function Page() {}`);
     expect(created.isError).toBe(false);
     expect(readFileSync(path.join(root, p), "utf8")).toBe("export default function Page() {}\n");
     // round-trip: read back the bracketed path and apply a tagged edit
     const tag = tagFrom(await hashlineRead(ctx, { path: p }));
-    const edited = await hashlineEdit(ctx, `[${p}#${tag}]\nreplace 1..1:\n+export default function Page() { return null; }`);
+    const edited = await hashlineEdit(ctx, `[${p}#${tag}]\nPUT 1.=1:\n+export default function Page() { return null; }`);
     expect(edited.isError).toBe(false);
     expect(readFileSync(path.join(root, p), "utf8")).toBe("export default function Page() { return null; }\n");
   });
@@ -196,7 +270,7 @@ describe("stale-tag rejection (R5)", () => {
     writeFileSync(path.join(root, "a.ts"), "x\ny\n");
     await hashlineRead(ctx, { path: "a.ts" }); // record a snapshot
     const before = readFileSync(path.join(root, "a.ts"), "utf8");
-    const res = await hashlineEdit(ctx, `[a.ts#0000]\nreplace 1..1:\n+Z`);
+    const res = await hashlineEdit(ctx, `[a.ts#0000]\nPUT 1.=1:\n+Z`);
     expect(res.isError).toBe(true);
     expect(readFileSync(path.join(root, "a.ts"), "utf8")).toBe(before);
   });
@@ -210,7 +284,7 @@ describe("read-before-edit gate (R6/feas-03)", () => {
     const probe = createContext(root);
     const liveTag = tagFrom(await hashlineRead(probe, { path: "a.ts" }));
     const fresh = createContext(root);
-    const res = await hashlineEdit(fresh, `[a.ts#${liveTag}]\nreplace 1..1:\n+Z`);
+    const res = await hashlineEdit(fresh, `[a.ts#${liveTag}]\nPUT 1.=1:\n+Z`);
     expect(res.isError).toBe(true);
     expect(res.text).toMatch(/no hashline read recorded/i);
     expect(readFileSync(path.join(root, "a.ts"), "utf8")).toBe("x\ny\n");
@@ -219,9 +293,34 @@ describe("read-before-edit gate (R6/feas-03)", () => {
 
 describe("path containment in edit (KTD9 / SEC-002)", () => {
   test("a section path escaping the root is rejected before any write", async () => {
-    const res = await hashlineEdit(ctx, `[../../evil.ts#AAAA]\nreplace 1..1:\n+pwned`);
+    const res = await hashlineEdit(ctx, `[../../evil.ts#AAAA]\nPUT 1.=1:\n+pwned`);
     expect(res.isError).toBe(true);
     expect(res.text).toMatch(/outside the workspace/);
+  });
+
+  // v18's file-level ops (`REM`, `MV DEST`) reach the filesystem through
+  // `delete`/`move`, which the section-path gate alone does not cover — `MV`'s
+  // destination never passes through it. The jail has to enforce both ends.
+  test("MV to a path outside the root is rejected and nothing moves", async () => {
+    writeFileSync(path.join(root, "a.ts"), "x\n");
+    const tag = tagFrom(await hashlineRead(ctx, { path: "a.ts" }));
+    const res = await hashlineEdit(ctx, `[a.ts#${tag}]\nMV ../../evil.ts`);
+    expect(res.isError).toBe(true);
+    expect(res.text).toMatch(/outside the workspace/);
+    expect(readFileSync(path.join(root, "a.ts"), "utf8")).toBe("x\n");
+  });
+
+  test("REM/MV inside the root land in the root, not the process cwd", async () => {
+    writeFileSync(path.join(root, "a.ts"), "x\n");
+    const moved = await hashlineEdit(ctx, `[a.ts#${tagFrom(await hashlineRead(ctx, { path: "a.ts" }))}]\nMV b.ts`);
+    expect(moved.isError).toBe(false);
+    expect(existsSync(path.join(root, "b.ts"))).toBe(true);
+    expect(existsSync(path.join(root, "a.ts"))).toBe(false);
+    expect(existsSync(path.join(process.cwd(), "b.ts"))).toBe(false);
+
+    const gone = await hashlineEdit(ctx, `[b.ts#${tagFrom(await hashlineRead(ctx, { path: "b.ts" }))}]\nREM`);
+    expect(gone.isError).toBe(false);
+    expect(existsSync(path.join(root, "b.ts"))).toBe(false);
   });
 });
 
@@ -251,12 +350,12 @@ describe("Claude memory carve-out (HASHLINE_ALLOW_MEMORY)", () => {
     process.env.HASHLINE_ALLOW_MEMORY = "1";
     const c = createContext(root);
     const memFile = path.join(memDir, "foo.md");
-    const created = await hashlineEdit(c, `[${memFile}]\ninsert head:\n+# note\n+body`);
+    const created = await hashlineEdit(c, `[${memFile}]\nPUT <1:\n+# note\n+body`);
     expect(created.isError).toBe(false);
     expect(readFileSync(memFile, "utf8")).toContain("# note");
     const out = await hashlineRead(c, { path: memFile, offset: 1 }); // offset forces body (create recorded a snapshot)
     expect(out).toContain("1:# note");
-    const res = await hashlineEdit(c, `[${memFile}#${tagFrom(out)}]\nreplace 2..2:\n+changed`);
+    const res = await hashlineEdit(c, `[${memFile}#${tagFrom(out)}]\nPUT 2.=2:\n+changed`);
     expect(res.isError).toBe(false);
     expect(readFileSync(memFile, "utf8")).toContain("changed");
   });
@@ -328,7 +427,7 @@ describe("Claude plans carve-out (HASHLINE_ALLOW_PLANS)", () => {
     process.env.HASHLINE_ALLOW_PLANS = "1";
     const c = createContext(root);
     const f = path.join(plansDir, "my-plan.md");
-    const created = await hashlineEdit(c, `[${f}]\ninsert head:\n+# plan\n+step 1`);
+    const created = await hashlineEdit(c, `[${f}]\nPUT <1:\n+# plan\n+step 1`);
     expect(created.isError).toBe(false);
     expect(readFileSync(f, "utf8")).toContain("# plan");
   });
@@ -372,11 +471,11 @@ describe("system temp-dir carve-out (HASHLINE_ALLOW_TMP)", () => {
     process.env.HASHLINE_ALLOW_TMP = "1";
     const c = createContext(root);
     const tmpFile = path.join(sibling, "pr-body.md");
-    const created = await hashlineEdit(c, `[${tmpFile}]\ninsert head:\n+# PR\n+body`);
+    const created = await hashlineEdit(c, `[${tmpFile}]\nPUT <1:\n+# PR\n+body`);
     expect(created.isError).toBe(false);
     expect(readFileSync(tmpFile, "utf8")).toContain("# PR");
     const out = await hashlineRead(c, { path: tmpFile });
-    const res = await hashlineEdit(c, `[${tmpFile}#${tagFrom(out)}]\nreplace 2..2:\n+changed`);
+    const res = await hashlineEdit(c, `[${tmpFile}#${tagFrom(out)}]\nPUT 2.=2:\n+changed`);
     expect(res.isError).toBe(false);
     expect(readFileSync(tmpFile, "utf8")).toContain("changed");
   });
@@ -418,10 +517,10 @@ describe("explicit-paths carve-out (HASHLINE_ALLOW_PATHS)", () => {
     process.env.HASHLINE_ALLOW_PATHS = sibling;
     const c = createContext(root);
     const f = path.join(sibling, "config.toml");
-    const created = await hashlineEdit(c, `[${f}]\ninsert head:\n+a = 1`);
+    const created = await hashlineEdit(c, `[${f}]\nPUT <1:\n+a = 1`);
     expect(created.isError).toBe(false);
     const out = await hashlineRead(c, { path: f });
-    const res = await hashlineEdit(c, `[${f}#${tagFrom(out)}]\nreplace 1..1:\n+a = 2`);
+    const res = await hashlineEdit(c, `[${f}#${tagFrom(out)}]\nPUT 1.=1:\n+a = 2`);
     expect(res.isError).toBe(false);
     expect(readFileSync(f, "utf8")).toContain("a = 2");
   });
@@ -482,8 +581,8 @@ describe("directory read lists files (discovery self-correction)", () => {
 });
 
 describe("file creation (R4/KTD10)", () => {
-  test("tagless header + insert head body creates a new file", async () => {
-    const res = await hashlineEdit(ctx, `[new.ts]\ninsert head:\n+export const x = 1;`);
+  test("tagless header + `PUT <1:` body creates a new file", async () => {
+    const res = await hashlineEdit(ctx, `[new.ts]\nPUT <1:\n+export const x = 1;`);
     expect(res.isError).toBe(false);
     expect(res.text).toMatch(/\(create\)/);
     expect(readFileSync(path.join(root, "new.ts"), "utf8")).toBe("export const x = 1;\n");
@@ -491,9 +590,64 @@ describe("file creation (R4/KTD10)", () => {
 
   test("creating an existing file is refused", async () => {
     writeFileSync(path.join(root, "dup.ts"), "exists\n");
-    const res = await hashlineEdit(ctx, `[dup.ts]\ninsert head:\n+nope`);
+    const res = await hashlineEdit(ctx, `[dup.ts]\nPUT <1:\n+nope`);
     expect(res.isError).toBe(true);
     expect(res.text).toMatch(/already exists/);
+  });
+
+  test("a body row missing its '+' is a hard error, not a silent drop", async () => {
+    const res = await hashlineEdit(ctx, `[a.ts]\nPUT <1:\n+line1\nline2 forgot plus\n+line3`);
+    expect(res.isError).toBe(true);
+    expect(res.text).toMatch(/must start with '\+'/);
+    expect(existsSync(path.join(root, "a.ts"))).toBe(false); // nothing written
+  });
+
+  test("a body row before `PUT <1:` is a hard error, not a silent drop", async () => {
+    const res = await hashlineEdit(ctx, `[a.ts]\n+orphan body row`);
+    expect(res.isError).toBe(true);
+    expect(res.text).toMatch(/before a `PUT <1:`/);
+    expect(existsSync(path.join(root, "a.ts"))).toBe(false);
+  });
+
+  test("a create section whose op is not a head/tail PUT is a hard error", async () => {
+    const res = await hashlineEdit(ctx, `[a.ts]\nPUT 1.=1:\n+text`);
+    expect(res.isError).toBe(true);
+    expect(res.text).toMatch(/is not valid here/);
+    expect(existsSync(path.join(root, "a.ts"))).toBe(false);
+  });
+
+  test("mixed input: a create and a tagged edit in one call both apply", async () => {
+    writeFileSync(path.join(root, "old.ts"), "const x = 1;\n");
+    const read = await hashlineRead(ctx, { path: "old.ts" });
+    const header = read.split("\n")[0];
+    const res = await hashlineEdit(ctx, `[new.ts]\nPUT <1:\n+created\n${header}\nPUT 1.=1:\n+const x = 2;`);
+    expect(res.isError).toBe(false);
+    expect(res.text).toMatch(/\(create\)/);
+    expect(res.text).toMatch(/\[old\.ts#[0-9A-F]{4}\]/);
+    expect(readFileSync(path.join(root, "old.ts"), "utf8")).toBe("const x = 2;\n");
+    expect(readFileSync(path.join(root, "new.ts"), "utf8")).toBe("created\n"); // no bleed from the tagged section
+  });
+
+  test("mixed input: a rejected tagged section blocks the create too (atomic resend)", async () => {
+    writeFileSync(path.join(root, "old.ts"), "const x = 1;\n");
+    // Never read → the read-before-edit gate rejects the tagged section.
+    const res = await hashlineEdit(ctx, `[new.ts]\nPUT <1:\n+created\n[old.ts#0000]\nPUT 1.=1:\n+const x = 2;`);
+    expect(res.isError).toBe(true);
+    expect(existsSync(path.join(root, "new.ts"))).toBe(false);
+    expect(readFileSync(path.join(root, "old.ts"), "utf8")).toBe("const x = 1;\n");
+  });
+
+  test("a tagged header terminates a create body (no cross-contamination)", () => {
+    const scan = scanCreateSections(`[new.ts]\nPUT <1:\n+a\n[old.ts#ABCD]\nPUT <1:\n+b`);
+    expect(scan.error).toBeNull();
+    expect(scan.creates).toEqual([{ path: "new.ts", body: "a" }]);
+    expect(scan.residual).toBe("[old.ts#ABCD]\nPUT <1:\n+b");
+  });
+
+  test("blank lines between sections are tolerated as separators", async () => {
+    const res = await hashlineEdit(ctx, `[a.ts]\nPUT <1:\n+one\n+\n+three\n`);
+    expect(res.isError).toBe(false);
+    expect(readFileSync(path.join(root, "a.ts"), "utf8")).toBe("one\n\nthree\n");
   });
 });
 
@@ -514,7 +668,7 @@ describe("hashlineSearch", () => {
     const out = await hashlineSearch(ctx, { pattern: "flag" });
     const header = /(\[c\.ts#[0-9A-F]{4}\])/.exec(out)?.[1];
     expect(header).toBeTruthy();
-    const res = await hashlineEdit(ctx, `${header}\nreplace 2..2:\n+const flag = false;`);
+    const res = await hashlineEdit(ctx, `${header}\nPUT 2.=2:\n+const flag = false;`);
     expect(res.isError).toBe(false);
     expect(readFileSync(path.join(root, "c.ts"), "utf8")).toContain("const flag = false;");
   });
@@ -569,7 +723,7 @@ describe("hashlineSearch", () => {
     writeFileSync(path.join(root, "other.ts"), "const unrelated = 2;\n");
     await hashlineSearch(ctx, { pattern: "target" });
     // The unmatched file has no snapshot, so editing it is refused (read-before-edit gate).
-    const res = await hashlineEdit(ctx, `[other.ts#AAAA]\nreplace 1..1:\n+const unrelated = 3;`);
+    const res = await hashlineEdit(ctx, `[other.ts#AAAA]\nPUT 1.=1:\n+const unrelated = 3;`);
     expect(res.isError).toBe(true);
     expect(res.text).toMatch(/no hashline read recorded/i);
   });
@@ -645,7 +799,7 @@ describe("live cwd follows a worktree switch (CLAUDE_CODE_SESSION_ID)", () => {
     const out = await hashlineRead(ctx, { path: "f.ts" });
     expect(out).toContain("worktree");
     const tag = tagFrom(out);
-    const res = await hashlineEdit(ctx, `[f.ts#${tag}]\nreplace 1..1:\n+edited`);
+    const res = await hashlineEdit(ctx, `[f.ts#${tag}]\nPUT 1.=1:\n+edited`);
     expect(res.isError).toBe(false);
     expect(readFileSync(path.join(live, "f.ts"), "utf8")).toBe("edited\n");
     expect(readFileSync(path.join(root, "f.ts"), "utf8")).toBe("launch\n"); // untouched

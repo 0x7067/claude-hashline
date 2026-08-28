@@ -83,3 +83,27 @@ Validating the post-edit tagged window (commits ab5241b/d983b75) — does return
 **Disposition: KEEP** U1–U4 on mechanism (unit-proven chaining contract) + safety (no regression). U5's live win is **unproven on this benchmark by design**.
 
 **Deferred follow-up:** a sequential-edit harness that forces two separate edit turns (e.g. far-apart bugs in a large file, or a verify-between-edits task), or measurement inside a real agentic multi-turn loop, is required to actually quantify the re-read savings. Tracked as follow-up, not done here.
+
+---
+
+## Note (2026-08-28): grammar migration invalidates the measurement baseline
+
+Everything above was measured with `@oh-my-pi/hashline` **15.12.4** and the v15
+patch grammar (`replace N..M:` / `delete N..M` / `insert before|after|head|tail`).
+The repo has since migrated to **18.0.9**, whose grammar is `PUT N.=M:` /
+`CUT N.=M` / `PUT <N:` / `PUT >N:`. No sweep has been re-run on v18.
+
+Consequences for this ledger:
+
+- **The trajectory numbers are not comparable across the migration.** Treat the
+  v15 baseline and cycle-1 result as history, not as the current baseline. The
+  next optimize-loop cycle must re-measure a fresh v18 baseline before comparing
+  any candidate.
+- **Cycle 1's lever survived, re-derived.** `normalizeColonRanges` became
+  `normalizeHunkHeaders`: it still repairs the read-row colon range (now
+  `PUT 23:23:` → `PUT 23.=23:`), and additionally maps the v15 verbs onto their
+  v18 equivalents so a model writing the old grammar is not rejected. Same
+  mechanism as cycle 1 — deterministic, unit-tested, no-op on valid input — so
+  the KEEP rationale carries over, but the *effect size* is unmeasured on v18.
+- **The rejection-category classifier still works.** `bench/analyze.ts` matches
+  on "hunk header"/"payload line", phrases v18's parser errors still use.

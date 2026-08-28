@@ -2,7 +2,7 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Edit|Write|NotebookEdit",
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
@@ -12,7 +12,7 @@
         ]
       },
       {
-        "matcher": "mcp__plugin_claude-hashline_hashline__(edit|read|search)",
+        "matcher": "mcp__.*hashline.*__(edit|read|search)",
         "hooks": [
           {
             "type": "command",

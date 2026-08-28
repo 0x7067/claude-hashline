@@ -11,7 +11,7 @@
     {
       "name": "claude-hashline",
       "source": ".",
-      "description": "Line-anchored hashline editing + tagged search via an MCP server; blocks the built-in Edit/Write/NotebookEdit tools so the model edits through hashline."
+      "description": "Line-anchored hashline editing + tagged search via an MCP server; blocks the built-in Edit/Write tools so the model edits through hashline."
     }
   ]
 }

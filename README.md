@@ -7,7 +7,7 @@ whole-file content hash and edits by line number.
 
 ```
 [src/app.ts#9A46]          [src/app.ts#9A46]
-1:export function hello() {   replace 2..2:
+1:export function hello() {   PUT 2.=2:
 2:  return "world";          +  return "hashline";
 3:}
 ```
@@ -30,8 +30,9 @@ Background on why line-anchored editing beats string replacement:
   - `edit` — adds three gates over the engine: path containment (can't escape the
     workspace), read-before-edit, and file creation (a tagless `[path]` header
     creates a file). Stale tags are rejected/recovered by the engine.
-- **PreToolUse hook** (`hooks/`) denies built-in `Edit`/`Write`/`NotebookEdit`
-  and redirects to hashline. A `SessionStart` hook nudges the model up front so
+- **PreToolUse hook** (`hooks/`) denies built-in `Edit`/`Write` and redirects to
+  hashline. `NotebookEdit` stays available — hashline has no notebook support,
+  and line-editing raw `.ipynb` JSON is worse than the built-in. A `SessionStart` hook nudges the model up front so
   it doesn't waste a turn on a blocked built-in.
 
 ## Install
@@ -51,6 +52,30 @@ denied with a redirect to `hashline__edit`.
 
 The MCP server and hooks are declared in `.claude-plugin/plugin.json` and
 `hooks/hooks.json`. Safe to enable globally.
+
+## Reduce permission prompts
+
+Replacing the built-in editors with MCP tools has a hidden cost: Claude Code's
+`acceptEdits` mode auto-accepts built-in `Edit`/`Write` but **never MCP tools**,
+so every hashline call prompts until you allowlist it. Without this, the plugin
+trades one kind of friction for another. Add to your `settings.json` (user or
+project scope):
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_claude-hashline_hashline__read",
+      "mcp__plugin_claude-hashline_hashline__search",
+      "mcp__plugin_claude-hashline_hashline__edit"
+    ]
+  }
+}
+```
+
+`read`/`search` are read-only and always safe to allow. Allowing `edit` gives
+the equivalent of a permanent `acceptEdits` for hashline (edits are confined to
+the workspace jail); leave it off the list if you want to review each edit.
 
 ## Opting out
 
@@ -142,3 +167,20 @@ real one before drawing conclusions.
 bun test          # adapters, hook, benchmark core, diff-preview chaining
 bun run typecheck
 ```
+
+**Upstream pin:** `@oh-my-pi/hashline` is pinned to `18.0.9`. The v15 → v18
+migration landed in 2026-08: the grammar the plugin teaches is now `PUT N.=M:` /
+`CUT N.=M` / `PUT <N:` / `PUT >N:`, replacing v15's
+`replace`/`delete`/`insert`. Two notes for the next bump:
+
+- **Legacy verbs are still accepted.** `src/core.ts` normalizes the v15 spellings
+  (and colon ranges like `PUT 12:14:`) into v18 syntax before parsing —
+  deterministic, unit-tested, and a strict no-op on valid v18 input. Models have
+  habits; being liberal in what we accept is the house style (see
+  `docs/benchmark/LEDGER.md` cycle 1).
+- **The benchmark numbers below were measured on the v15 grammar** and have not
+  been re-run since. Re-measure before drawing grammar-sensitive conclusions.
+
+Upstream majors change the patch language, not just the API. Treat a bump as a
+migration: the tool descriptions in `src/descriptions.ts`, the normalizer, the
+hook messages, and a benchmark re-run.
