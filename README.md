@@ -53,6 +53,30 @@ denied with a redirect to `hashline__edit`.
 The MCP server and hooks are declared in `.claude-plugin/plugin.json` and
 `hooks/hooks.json`. Safe to enable globally.
 
+## Reduce permission prompts
+
+Replacing the built-in editors with MCP tools has a hidden cost: Claude Code's
+`acceptEdits` mode auto-accepts built-in `Edit`/`Write` but **never MCP tools**,
+so every hashline call prompts until you allowlist it. Without this, the plugin
+trades one kind of friction for another. Add to your `settings.json` (user or
+project scope):
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "mcp__plugin_claude-hashline_hashline__read",
+      "mcp__plugin_claude-hashline_hashline__search",
+      "mcp__plugin_claude-hashline_hashline__edit"
+    ]
+  }
+}
+```
+
+`read`/`search` are read-only and always safe to allow. Allowing `edit` gives
+the equivalent of a permanent `acceptEdits` for hashline (edits are confined to
+the workspace jail); leave it off the list if you want to review each edit.
+
 ## Opting out
 
 Enforcement is on by default and blocks editing everywhere, so any repo relying
@@ -143,3 +167,10 @@ real one before drawing conclusions.
 bun test          # adapters, hook, benchmark core, diff-preview chaining
 bun run typecheck
 ```
+
+**Upstream pin:** `@oh-my-pi/hashline` is pinned to `15.12.4` deliberately.
+Newer majors (v18 as of 2026-08) replaced the patch grammar this plugin teaches
+the model — `replace N..M:`/`delete`/`insert` became `PUT N.=M:`/`CUT`/`PUT <N:`
+— so an upgrade means rewriting the tool descriptions, the colon-range
+normalizer, and re-running the benchmark. Treat it as a migration, not a dep
+bump.
